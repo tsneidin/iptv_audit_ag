@@ -41,7 +41,6 @@ def parse_m3u_or_api_url(url_str: str, source_url: str = "") -> Optional[IPTVSer
         if not parsed.netloc:
             return None
 
-        # Check for query parameters (e.g. get.php?username=X&password=Y)
         qs = parse_qs(parsed.query)
         username = qs.get("username", [None])[0] or qs.get("user", [None])[0]
         password = qs.get("password", [None])[0] or qs.get("pass", [None])[0]
@@ -57,7 +56,6 @@ def parse_m3u_or_api_url(url_str: str, source_url: str = "") -> Optional[IPTVSer
                 raw_m3u_url=url_str.strip(),
             )
 
-        # Check for path-based credentials (e.g. /live/username/password/123.ts)
         path_parts = [p for p in parsed.path.split("/") if p]
         if len(path_parts) >= 3 and path_parts[0] in ("live", "movie", "series"):
             user, pwd = path_parts[1], path_parts[2]
@@ -108,6 +106,60 @@ def parse_key_value_blocks(text: str, source_url: str = "") -> List[IPTVServer]:
     return servers
 
 
+def parse_tabular_lines(text: str, source_url: str = "") -> List[IPTVServer]:
+    """
+    Parses tabular IPTV audit reports such as:
+    http://skybacon.xyz:80   nPQmGZNQmmqf : cLac2Q7BaNNf   Guayaquil, America ...
+    or under section headers:
+    === http://host:port (count) ===
+    user : pass
+    """
+    servers: List[IPTVServer] = []
+    current_host: Optional[str] = None
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Section header tracker
+        header_match = re.search(r"===\s*(https?://[^\s\)]+)", line)
+        if header_match:
+            current_host = normalize_host(header_match.group(1))
+            continue
+
+        # Tabular line: http://host:port <spaces> user : pass ...
+        table_match = re.search(r"^(https?://[^\s:]+(?::\d+)?)\s+([^\s:]+)\s*:\s*(\S+)", line)
+        if table_match:
+            servers.append(
+                IPTVServer(
+                    host=normalize_host(table_match.group(1)),
+                    username=table_match.group(2).strip(),
+                    password=table_match.group(3).strip(),
+                    source_url=source_url,
+                )
+            )
+            continue
+
+        # Line with user : pass under active section host
+        if current_host and not line.lower().startswith("portal"):
+            user_pass_match = re.search(r"^([^\s:]+)\s*:\s*(\S+)", line)
+            if user_pass_match:
+                user = user_pass_match.group(1).strip()
+                pwd = user_pass_match.group(2).strip()
+                if user.lower() not in ("user", "username", "host", "server", "portal", "status", "subject"):
+                    servers.append(
+                        IPTVServer(
+                            host=current_host,
+                            username=user,
+                            password=pwd,
+                            source_url=source_url,
+                        )
+                    )
+
+    return servers
+
+
 def parse_raw_credential_lines(text: str, source_url: str = "") -> List[IPTVServer]:
     """
     Parses line-based delimiter formats like:
@@ -121,8 +173,6 @@ def parse_raw_credential_lines(text: str, source_url: str = "") -> List[IPTVServ
         if not line or line.startswith("#"):
             continue
 
-        # Look for host:port:username:password
-        # e.g., http://domain.com:8080:username:password or domain.com:8080:username:password
         colon_parts = line.split(":")
         if len(colon_parts) == 4 and not line.startswith("http"):
             host_str = f"{colon_parts[0]}:{colon_parts[1]}"
@@ -139,7 +189,6 @@ def parse_raw_credential_lines(text: str, source_url: str = "") -> List[IPTVServ
                 )
                 continue
 
-        # Look for comma-separated: host,user,pass
         comma_parts = line.split(",")
         if len(comma_parts) >= 3 and ("." in comma_parts[0] or "http" in comma_parts[0]):
             host_str = comma_parts[0].strip()
@@ -161,7 +210,7 @@ def parse_raw_credential_lines(text: str, source_url: str = "") -> List[IPTVServ
 def extract_iptv_servers(text: str, source_url: str = "") -> List[IPTVServer]:
     """
     Comprehensive parser that extracts all IPTV server credentials
-    from decrypted text, M3U links, or key-value blocks.
+    from decrypted text, M3U links, key-value blocks, or tabular reports.
     Deduplicates results.
     """
     servers: List[IPTVServer] = []
@@ -172,19 +221,24 @@ def extract_iptv_servers(text: str, source_url: str = "") -> List[IPTVServer]:
             seen[s.key] = s
             servers.append(s)
 
-    # 1. Check for key-value blocks (Host: ..., User: ..., Pass: ...)
+    # 1. Tabular reports (e.g. Portal User : Pass ...)
+    tab_servers = parse_tabular_lines(text, source_url)
+    for s in tab_servers:
+        add_server(s)
+
+    # 2. Key-value blocks (Host: ..., User: ..., Pass: ...)
     kv_servers = parse_key_value_blocks(text, source_url)
     for s in kv_servers:
         add_server(s)
 
-    # 2. Extract embedded get.php / player_api.php URLs
+    # 3. Embedded get.php / player_api.php URLs
     url_matches = re.findall(r"https?://[^\s\"'<>\)\]]+", text)
     for url in url_matches:
         server = parse_m3u_or_api_url(url, source_url)
         if server:
             add_server(server)
 
-    # 3. Check for delimiter-based lines (host:port:user:pass)
+    # 4. Delimiter-based lines (host:port:user:pass)
     raw_line_servers = parse_raw_credential_lines(text, source_url)
     for s in raw_line_servers:
         add_server(s)

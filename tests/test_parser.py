@@ -30,6 +30,20 @@ class TestParser(unittest.TestCase):
         self.assertEqual(servers[0].password, "christian1")
         self.assertEqual(servers[1].username, "Martin1")
 
+    def test_parse_tabular_lines(self):
+        text = """
+        🟨 === http://skybacon.xyz:80 (420) ===
+        Portal                   User : Pass                       Región               Estado
+        http://skybacon.xyz:80   nPQmGZNQmmqf : cLac2Q7BaNNf       Guayaquil, America   Activa
+        http://skybacon.xyz:80   dagarcia2d : 3uETFuEZHx4t         Guayaquil, America   Activa
+        """
+        servers = extract_iptv_servers(text)
+        self.assertEqual(len(servers), 2)
+        self.assertEqual(servers[0].host, "http://skybacon.xyz:80")
+        self.assertEqual(servers[0].username, "nPQmGZNQmmqf")
+        self.assertEqual(servers[0].password, "cLac2Q7BaNNf")
+        self.assertEqual(servers[1].username, "dagarcia2d")
+
     def test_deduplication(self):
         text = """
         http://totalhost.org:8080/get.php?username=00671987&password=61791210
