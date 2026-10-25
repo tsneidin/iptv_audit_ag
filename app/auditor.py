@@ -37,6 +37,9 @@ class AuditResult(BaseModel):
     adult_details: str = "None"
     stream_probe: str = "Skipped"
     stream_probe_badge: str = "gray"  # green, yellow, red, gray
+    test_channel_name: Optional[str] = None  # e.g. "BBC News HD"
+    test_stream_url: Optional[str] = None  # http://...
+    vlc_url: Optional[str] = None  # vlc://http://...
     latency_ms: int = 0
     m3u_url: str
     error_message: Optional[str] = None
@@ -81,6 +84,40 @@ def check_adult(name: str) -> bool:
     if not name:
         return False
     return bool(ADULT_REGEX.search(name))
+
+
+def pick_test_channel(streams: Any) -> tuple[Optional[str], Optional[str]]:
+    """
+    Searches streams for BBC News, prominent news channels, or the first live channel.
+    Returns (channel_name, stream_id).
+    """
+    if not isinstance(streams, list) or not streams:
+        return None, None
+
+    bbc_matches = []
+    news_matches = []
+    fallback_stream = None
+
+    for s in streams:
+        sname = s.get("name", "")
+        sid = s.get("stream_id")
+        if not sid or sname.startswith(("-=", "###", "===")):
+            continue
+
+        if not fallback_stream:
+            fallback_stream = (sname, str(sid))
+
+        nl = sname.lower()
+        if "bbc" in nl and ("news" in nl or "world" in nl or "one" in nl or "1" in nl):
+            bbc_matches.append((sname, str(sid)))
+        elif any(k in nl for k in ["news", "cnn", "sky news", "fox news", "svt"]):
+            news_matches.append((sname, str(sid)))
+
+    if bbc_matches:
+        return bbc_matches[0]
+    if news_matches:
+        return news_matches[0]
+    return fallback_stream if fallback_stream else (None, None)
 
 
 async def test_live_stream_probe(
@@ -139,6 +176,7 @@ async def audit_iptv_server(
     High-performance tester against Xtream Codes API.
     Uses dead-host caching to avoid timeout lag on dead domains.
     Counts exact adult channels matching 'adult' or 'xxx'.
+    Extracts BBC News / prominent channel for one-click VLC playback.
     """
     if dead_host_cache is not None and server.host in dead_host_cache:
         cached_reason = dead_host_cache[server.host]
@@ -253,6 +291,8 @@ async def audit_iptv_server(
         adult_live_cids: List[str] = []
         adult_channel_ids = set()
         candidate_stream_id = None
+        live_sample_res = None
+        live_res = None
 
         async def fetch_endpoint(action: str):
             try:
@@ -273,7 +313,7 @@ async def audit_iptv_server(
                 fetch_endpoint("get_live_categories"),
                 fetch_endpoint("get_vod_categories"),
                 fetch_endpoint("get_series_categories"),
-                fetch_endpoint("get_live_streams") if probe_stream else asyncio.sleep(0),
+                fetch_endpoint("get_live_streams"),
             )
 
             # 1. Identify adult live categories
@@ -372,6 +412,21 @@ async def audit_iptv_server(
             if isinstance(series_res, list):
                 series_count = len(series_res)
 
+        # Pick test channel (BBC News prioritized) for 1-click VLC playback
+        test_ch_name, test_ch_id = None, None
+        if isinstance(live_sample_res, list):
+            test_ch_name, test_ch_id = pick_test_channel(live_sample_res)
+        elif isinstance(live_res, list):
+            test_ch_name, test_ch_id = pick_test_channel(live_res)
+
+        test_stream_url = None
+        vlc_url = None
+        if test_ch_id:
+            test_stream_url = f"{server.host}/live/{server.username}/{server.password}/{test_ch_id}.ts"
+            vlc_url = f"vlc://{test_stream_url}"
+            # Prioritize test_ch_id (e.g. BBC News) for the live probe
+            candidate_stream_id = test_ch_id
+
         adult_channels_count = len(adult_channel_ids)
         if adult_channels_count > 0:
             adult_detected = True
@@ -415,6 +470,9 @@ async def audit_iptv_server(
             adult_details=adult_details,
             stream_probe=stream_probe_status,
             stream_probe_badge=stream_badge,
+            test_channel_name=test_ch_name,
+            test_stream_url=test_stream_url,
+            vlc_url=vlc_url,
             latency_ms=latency,
             m3u_url=server.standard_m3u_url,
         )

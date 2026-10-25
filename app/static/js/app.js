@@ -332,8 +332,10 @@ function updateStats() {
   }
 }
 
+let currentFilteredList = [];
+
 function renderTable() {
-  let filtered = allResults.filter(r => {
+  currentFilteredList = allResults.filter(r => {
     if (searchQuery) {
       const matchHost = (r.host || '').toLowerCase().includes(searchQuery);
       const matchUser = (r.username || '').toLowerCase().includes(searchQuery);
@@ -345,7 +347,7 @@ function renderTable() {
     return true;
   });
 
-  if (filtered.length === 0) {
+  if (currentFilteredList.length === 0) {
     resultsTbody.innerHTML = `
       <tr>
         <td colspan="11" class="text-center py-8 text-slate-500">
@@ -356,7 +358,7 @@ function renderTable() {
     return;
   }
 
-  resultsTbody.innerHTML = filtered.map(r => {
+  resultsTbody.innerHTML = currentFilteredList.map((r, idx) => {
     let statusClass = 'bg-slate-800 text-slate-400 border-slate-700';
     let statusIcon = 'fa-circle-question';
     if (r.status_badge === 'active') {
@@ -433,11 +435,26 @@ function renderTable() {
         </td>
 
         <td class="py-3 px-4 whitespace-nowrap text-xs ${streamClass}">
-          ${escapeHtml(r.stream_probe || 'N/A')}
+          <div>${escapeHtml(r.stream_probe || 'N/A')}</div>
+          ${r.test_channel_name ? `
+            <div class="mt-0.5 text-[11px] font-sans truncate max-w-[160px] text-slate-400 flex items-center gap-1" title="${escapeHtml(r.test_channel_name)}">
+              <i class="fa-solid fa-tv text-[9px] text-orange-400"></i>
+              <span class="truncate">${escapeHtml(r.test_channel_name)}</span>
+            </div>` : ''}
         </td>
 
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5">
+            ${r.is_working && (r.vlc_url || r.test_stream_url) ? `
+              <button onclick="playInVlcByIndex(${idx})" class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" title="Play ${escapeHtml(r.test_channel_name || 'Channel')} in VLC">
+                <i class="fa-solid fa-play text-xs"></i>
+              </button>
+            ` : ''}
+            ${r.is_working ? `
+              <button onclick="openPlayerModalByIndex(${idx})" class="p-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center justify-center w-7 h-7" title="Connect Player (UHF, Chillio, IPTVX, VLC)">
+                <i class="fa-solid fa-tv text-xs"></i>
+              </button>
+            ` : ''}
             <button onclick="copyM3U('${escapeJs(r.m3u_url)}', this)" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center w-7 h-7" title="Copy M3U URL">
               <i class="fa-solid fa-link text-xs"></i>
             </button>
@@ -592,3 +609,92 @@ function escapeJs(str) {
   if (!str) return '';
   return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
+
+// VLC Playback & Player Configuration Modal
+window.playInVlcByIndex = function(idx) {
+  const r = currentFilteredList[idx];
+  if (!r) return;
+  const targetUrl = r.vlc_url || (r.test_stream_url ? `vlc://${r.test_stream_url}` : null);
+  if (!targetUrl) {
+    showToast('No stream URL available to play.', 'error');
+    return;
+  }
+  const chName = r.test_channel_name || 'Live Channel';
+  showToast(`Opening ${chName} in VLC...`);
+  window.location.href = targetUrl;
+};
+
+window.openPlayerModalByIndex = function(idx) {
+  const r = currentFilteredList[idx];
+  if (!r) return;
+  openPlayerModal(r);
+};
+
+window.openPlayerModal = function(r) {
+  const modal = document.getElementById('player-modal');
+  if (!modal) return;
+
+  document.getElementById('modal-host-subtitle').textContent = r.host || '';
+  document.getElementById('modal-field-host').value = r.host || '';
+  document.getElementById('modal-field-user').value = r.username || '';
+  document.getElementById('modal-field-pass').value = r.password || '';
+  document.getElementById('modal-field-m3u').value = r.m3u_url || '';
+
+  const testBadge = document.getElementById('modal-test-channel-badge');
+  const chName = r.test_channel_name || 'BBC News';
+  testBadge.textContent = chName;
+
+  const btnVlcUri = document.getElementById('modal-btn-vlc-uri');
+  const btnVlcM3u = document.getElementById('modal-btn-vlc-m3u');
+
+  if (r.test_stream_url) {
+    btnVlcUri.disabled = false;
+    btnVlcUri.onclick = () => {
+      const vUrl = r.vlc_url || `vlc://${r.test_stream_url}`;
+      showToast(`Opening ${chName} in VLC...`);
+      window.location.href = vUrl;
+    };
+    btnVlcM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}`;
+    btnVlcM3u.classList.remove('opacity-50', 'pointer-events-none');
+  } else {
+    btnVlcUri.disabled = true;
+    btnVlcUri.onclick = null;
+    btnVlcM3u.removeAttribute('href');
+    btnVlcM3u.classList.add('opacity-50', 'pointer-events-none');
+  }
+
+  const btnCopyAll = document.getElementById('modal-btn-copy-all');
+  btnCopyAll.onclick = () => {
+    const text = `Host: ${r.host}\nUsername: ${r.username}\nPassword: ${r.password}\nM3U: ${r.m3u_url}`;
+    window.copyToClipboard(text, 'Copied all credentials for UHF/Chillio/IPTVX!');
+  };
+
+  modal.classList.remove('hidden');
+};
+
+window.closePlayerModal = function() {
+  const modal = document.getElementById('player-modal');
+  if (modal) modal.classList.add('hidden');
+};
+
+window.copyFieldValue = function(inputId, btnElement) {
+  const el = document.getElementById(inputId);
+  if (!el || !el.value) return;
+  window.copyToClipboard(el.value, 'Copied to clipboard!');
+  if (btnElement) {
+    const icon = btnElement.querySelector('i');
+    if (icon) {
+      const orig = icon.className;
+      icon.className = 'fa-solid fa-check text-emerald-400 text-xs';
+      setTimeout(() => { icon.className = orig; }, 1200);
+    }
+  }
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closePlayerModal();
+});
+
+document.getElementById('player-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'player-modal') closePlayerModal();
+});

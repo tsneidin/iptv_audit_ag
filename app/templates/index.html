@@ -25,7 +25,7 @@
       }
     }
   </script>
-  <link rel="stylesheet" href="/static/css/styles.css?v=1.3.0">
+  <link rel="stylesheet" href="/static/css/styles.css?v=1.4.0">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body class="bg-[#0f1418] text-slate-100 min-h-screen flex flex-col font-sans selection:bg-orange-600 selection:text-white">
@@ -233,7 +233,7 @@
               <th class="py-3 px-4 text-center">Movies</th>
               <th class="py-3 px-4 text-center">Series</th>
               <th class="py-3 px-4 text-center">Adult Content</th>
-              <th class="py-3 px-4">Stream Probe</th>
+              <th class="py-3 px-4">Stream / Test Channel</th>
               <th class="py-3 px-4 text-right">Actions</th>
             </tr>
           </thead>
@@ -256,6 +256,116 @@
 
   </main>
 
+  <!-- Player Connection / Launch Modal -->
+  <div id="player-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm hidden p-4">
+    <div class="bg-unraid-card border border-unraid-border rounded-2xl max-w-lg w-full p-6 shadow-2xl relative space-y-5">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-unraid-border">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-500 text-white flex items-center justify-center text-lg shadow-md shadow-cyan-500/20">
+            <i class="fa-solid fa-satellite-dish"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-semibold text-white">
+              Connect IPTV Player
+            </h3>
+            <p id="modal-host-subtitle" class="text-xs text-slate-400 font-mono truncate max-w-xs">http://...</p>
+          </div>
+        </div>
+        <button onclick="closePlayerModal()" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition">
+          <i class="fa-solid fa-xmark text-base"></i>
+        </button>
+      </div>
+
+      <!-- Quick Play in VLC Section -->
+      <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i class="fa-solid fa-play text-orange-500 text-sm"></i>
+            <span class="text-xs font-semibold text-slate-200">Quick Test Stream (VLC)</span>
+          </div>
+          <span id="modal-test-channel-badge" class="text-[11px] px-2.5 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 font-medium">
+            BBC News
+          </span>
+        </div>
+        
+        <p class="text-xs text-slate-400">
+          Verify live video playback instantly in VLC on Mac, Windows, or Linux.
+        </p>
+
+        <div class="flex items-center gap-2 pt-1">
+          <button id="modal-btn-vlc-uri" class="flex-1 py-2 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-orange-600/20">
+            <i class="fa-solid fa-play text-[11px]"></i> Launch in VLC (URI)
+          </button>
+          <a id="modal-btn-vlc-m3u" href="#" download class="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-2 transition" title="Download 1-channel .m3u launcher file">
+            <i class="fa-solid fa-download text-[11px]"></i> .m3u Launcher
+          </a>
+        </div>
+      </div>
+
+      <!-- UHF, Chillio & IPTVX Configuration -->
+      <div class="space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+            <i class="fa-solid fa-sliders text-cyan-400"></i>
+            UHF / Chillio / IPTVX (Xtream API)
+          </span>
+          <button id="modal-btn-copy-all" class="text-[11px] text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1">
+            <i class="fa-regular fa-copy"></i> Copy All
+          </button>
+        </div>
+
+        <div class="space-y-2 text-xs font-mono">
+          <div>
+            <label class="text-[11px] text-slate-400 block mb-1">Server URL / Host</label>
+            <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
+              <input id="modal-field-host" readonly class="w-full bg-transparent px-3 py-1.5 text-slate-200 focus:outline-none">
+              <button onclick="copyFieldValue('modal-field-host', this)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[11px] text-slate-400 block mb-1">Username</label>
+              <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
+                <input id="modal-field-user" readonly class="w-full bg-transparent px-3 py-1.5 text-slate-200 focus:outline-none">
+                <button onclick="copyFieldValue('modal-field-user', this)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                  <i class="fa-regular fa-copy"></i>
+                </button>
+              </div>
+            </div>
+            <div>
+              <label class="text-[11px] text-slate-400 block mb-1">Password</label>
+              <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
+                <input id="modal-field-pass" readonly class="w-full bg-transparent px-3 py-1.5 text-slate-200 focus:outline-none">
+                <button onclick="copyFieldValue('modal-field-pass', this)" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                  <i class="fa-regular fa-copy"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-[11px] text-slate-400 block mb-1">Full M3U Plus URL (for Playlist Import)</label>
+            <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
+              <input id="modal-field-m3u" readonly class="w-full bg-transparent px-3 py-1.5 text-slate-200 focus:outline-none truncate">
+              <button onclick="copyFieldValue('modal-field-m3u', this)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pt-2 text-[11px] text-slate-500 border-t border-unraid-border/60">
+        In <strong>UHF</strong>, <strong>Chillio</strong>, or <strong>IPTVX</strong>, tap <em>Add Playlist</em> &rarr; <em>Xtream Codes</em>, then paste the Server, Username & Password above.
+      </div>
+    </div>
+  </div>
+
   <!-- Notification Toast -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm pointer-events-none">
     <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
@@ -266,6 +376,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js?v=1.3.0"></script>
+  <script src="/static/js/app.js?v=1.4.0"></script>
 </body>
 </html>

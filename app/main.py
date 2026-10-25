@@ -234,6 +234,26 @@ async def api_audit_stream(payload: AuditRequest):
     )
 
 
+@app.get("/api/play/m3u")
+async def download_single_stream_m3u(url: str, title: str = "Live Stream"):
+    """
+    Returns a small single-channel .m3u playlist file targeting this exact stream.
+    When opened, VLC or system media players immediately start playing the channel.
+    """
+    clean_title = title.strip() or "Live Stream"
+    content = f"#EXTM3U\n#EXTINF:-1,{clean_title}\n{url}\n"
+    import re
+    safe_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', clean_title)[:40] or "channel"
+    return Response(
+        content=content,
+        media_type="audio/x-mpegurl",
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}.m3u"',
+            "Content-Type": "audio/x-mpegurl; charset=utf-8",
+        },
+    )
+
+
 @app.post("/api/export/csv")
 async def export_csv(results: List[Dict[str, Any]]):
     output = io.StringIO()
