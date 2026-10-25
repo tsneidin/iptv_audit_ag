@@ -237,8 +237,7 @@ async def api_audit_stream(payload: AuditRequest):
 @app.get("/api/stream/proxy")
 async def proxy_live_stream(url: str):
     """
-    Proxies live MPEG-TS / HLS stream from IPTV provider through the Unraid container
-    (routed over WireGuard wg0), setting proper CORS and VLC User-Agent headers.
+    Proxies live MPEG-TS / HLS stream from IPTV provider with redirect support.
     """
     if not url.startswith(("http://", "https://")):
         return Response(content="Invalid stream URL", status_code=400)
@@ -248,7 +247,7 @@ async def proxy_live_stream(url: str):
         "Accept": "*/*",
     }
 
-    client = httpx.AsyncClient(verify=False, timeout=20.0)
+    client = httpx.AsyncClient(verify=False, timeout=15.0, follow_redirects=True)
 
     async def stream_generator():
         try:
@@ -275,24 +274,15 @@ async def proxy_live_stream(url: str):
 
 
 @app.get("/api/play/m3u")
-async def download_single_stream_m3u(request: Request, url: str, title: str = "Live Stream", proxy: bool = False):
+async def download_single_stream_m3u(url: str, title: str = "Live Stream"):
     """
-    Returns a small single-channel .m3u playlist file targeting this exact stream.
-    When opened, VLC or system media players immediately start playing the channel.
-    If proxy=True, the stream routes through the container's WireGuard VPN.
+    Returns a small single-channel .m3u playlist file targeting this direct stream.
+    When opened on the user's laptop/PC, VLC immediately opens and plays the channel.
     """
     clean_title = title.strip() or "Live Stream"
-    stream_target = url
-    if proxy:
-        base_url = str(request.base_url).rstrip("/")
-        from urllib.parse import quote
-        stream_target = f"{base_url}/api/stream/proxy?url={quote(url, safe='')}"
-
-    content = f"#EXTM3U\n#EXTINF:-1,{clean_title}\n{stream_target}\n"
+    content = f"#EXTM3U\n#EXTINF:-1,{clean_title}\n{url}\n"
     import re
     safe_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', clean_title)[:40] or "channel"
-    if proxy:
-        safe_filename += "_vpn"
     return Response(
         content=content,
         media_type="audio/x-mpegurl",

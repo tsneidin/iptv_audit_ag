@@ -446,12 +446,16 @@ function renderTable() {
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5">
             ${r.is_working && (r.vlc_url || r.test_stream_url) ? `
-              <button onclick="openStreamPlayerModal(${idx})" class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" title="Play ${escapeHtml(r.test_channel_name || 'Channel')} (Web Player & VLC)">
+              <a href="/api/play/m3u?url=${encodeURIComponent(r.test_stream_url || '')}&title=${encodeURIComponent(r.test_channel_name || 'BBC News')}" 
+                 onclick="onPlayClick('${escapeJs(r.test_stream_url || '')}', '${escapeJs(r.test_channel_name || 'BBC News')}')" 
+                 download 
+                 class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" 
+                 title="Play ${escapeHtml(r.test_channel_name || 'BBC News')} in VLC">
                 <i class="fa-solid fa-play text-xs"></i>
-              </button>
+              </a>
             ` : ''}
             ${r.is_working ? `
-              <button onclick="openPlayerModalByIndex(${idx})" class="p-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center justify-center w-7 h-7" title="Connect Player (UHF, Chillio, IPTVX, VLC)">
+              <button onclick="openStreamPlayerModal(${idx})" class="p-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center justify-center w-7 h-7" title="Preview Stream & Player Details">
                 <i class="fa-solid fa-tv text-xs"></i>
               </button>
             ` : ''}
@@ -615,6 +619,14 @@ function escapeJs(str) {
 // ==========================================
 let activeMpegtsPlayer = null;
 let currentPlayingServer = null;
+let videoWatchdogTimer = null;
+
+// 1-Click VLC Play button handler
+window.onPlayClick = function(streamUrl, channelName) {
+  if (streamUrl) {
+    window.copyToClipboard(streamUrl, `Opening ${channelName} in VLC! (Stream URL copied for Cmd+N)`);
+  }
+};
 
 window.openStreamPlayerModal = function(idx) {
   const r = currentFilteredList[idx];
@@ -632,35 +644,31 @@ window.openStreamPlayerModalByObj = function(r) {
   document.getElementById('video-modal-subtitle').textContent = r.host || '';
   document.getElementById('video-stream-url-field').value = r.test_stream_url || '';
 
-  // Setup direct and VPN .m3u download buttons
+  // Setup direct .m3u download button
   const directM3u = document.getElementById('video-btn-m3u-direct');
-  const vpnM3u = document.getElementById('video-btn-m3u-vpn');
   if (r.test_stream_url) {
     directM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}`;
-    vpnM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}&proxy=true`;
     directM3u.classList.remove('opacity-50', 'pointer-events-none');
-    vpnM3u.classList.remove('opacity-50', 'pointer-events-none');
   } else {
     directM3u.classList.add('opacity-50', 'pointer-events-none');
-    vpnM3u.classList.add('opacity-50', 'pointer-events-none');
   }
 
   // Setup CLI command button
   const btnCli = document.getElementById('video-btn-copy-cli');
   if (btnCli) {
     btnCli.onclick = () => {
-      const cmd = `open -a VLC "${r.test_stream_url}" || vlc "${r.test_stream_url}"`;
-      window.copyToClipboard(cmd, 'VLC launch command copied for Terminal!');
+      const cmd = `open -a VLC "${r.test_stream_url}"`;
+      window.copyToClipboard(cmd, 'VLC launch command copied for Mac Terminal!');
     };
   }
 
   modal.classList.remove('hidden');
 
-  // Start in-browser video playback
-  initLiveVideoPlayer(r.test_stream_url);
+  // Start direct client playback with watchdog fallback to VLC
+  initLiveVideoPlayer(r.test_stream_url, chName);
 };
 
-function initLiveVideoPlayer(streamUrl) {
+function initLiveVideoPlayer(streamUrl, chName = 'Live Channel') {
   destroyLiveVideoPlayer();
 
   const videoElement = document.getElementById('live-video');
@@ -673,22 +681,65 @@ function initLiveVideoPlayer(streamUrl) {
     return;
   }
 
-  if (overlay) overlay.classList.remove('hidden');
-  if (overlayText) overlayText.textContent = 'Connecting to stream via wg0 VPN proxy...';
+  // Reset overlay to loading
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `
+      <i class="fa-solid fa-circle-notch fa-spin text-orange-500 text-3xl"></i>
+      <p id="video-loading-text" class="text-xs text-slate-300 font-medium">Checking live video stream...</p>
+    `;
+  }
 
-  const proxyUrl = `/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+  const directStreamUrl = streamUrl;
 
-  // Use mpegts.js for low-latency live MPEG-TS transmuxing
+  function showVlcFallback() {
+    if (!overlay) return;
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `
+      <div class="text-center p-4 space-y-2.5 max-w-sm">
+        <div class="w-12 h-12 rounded-xl bg-orange-500/20 text-orange-400 mx-auto flex items-center justify-center text-xl">
+          <i class="fa-solid fa-traffic-cone"></i>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-white">Play in VLC Media Player</h4>
+          <p class="text-xs text-slate-400 mt-1">
+            Browser lacks native MPEG-TS decoders. Open directly on your Mac using VLC:
+          </p>
+        </div>
+        <div class="pt-1 flex items-center justify-center gap-2">
+          <a href="/api/play/m3u?url=${encodeURIComponent(directStreamUrl)}&title=${encodeURIComponent(chName)}" 
+             download 
+             onclick="window.copyToClipboard('${escapeJs(directStreamUrl)}')"
+             class="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md shadow-orange-600/30">
+            <i class="fa-solid fa-download text-xs"></i> Download .m3u for VLC
+          </a>
+        </div>
+      </div>
+    `;
+  }
+
+  // 3-second watchdog timer: if the browser can't decode the raw TS stream, show the VLC action
+  videoWatchdogTimer = setTimeout(() => {
+    if (videoElement.paused || videoElement.readyState < 2) {
+      showVlcFallback();
+    }
+  }, 3000);
+
+  videoElement.onplaying = () => {
+    if (videoWatchdogTimer) clearTimeout(videoWatchdogTimer);
+    if (overlay) overlay.classList.add('hidden');
+  };
+
+  // Try direct mpegts.js on client side
   if (window.mpegts && window.mpegts.getFeatureList().mseLivePlayback) {
     try {
       activeMpegtsPlayer = mpegts.createPlayer({
         type: 'mse',
         isLive: true,
-        url: proxyUrl,
+        url: directStreamUrl,
       }, {
         enableStashBuffer: false,
         liveBufferLatencyChasing: true,
-        autoCleanupSourceBuffer: true,
       });
 
       activeMpegtsPlayer.attachMediaElement(videoElement);
@@ -697,36 +748,40 @@ function initLiveVideoPlayer(streamUrl) {
       const playPromise = activeMpegtsPlayer.play();
       if (playPromise !== undefined) {
         playPromise.then(() => {
+          if (videoWatchdogTimer) clearTimeout(videoWatchdogTimer);
           if (overlay) overlay.classList.add('hidden');
         }).catch(() => {
-          // If browser policy blocks sound autoplay, mute and retry
           videoElement.muted = true;
           activeMpegtsPlayer.play().then(() => {
+            if (videoWatchdogTimer) clearTimeout(videoWatchdogTimer);
             if (overlay) overlay.classList.add('hidden');
           }).catch(() => {
-            if (overlayText) overlayText.textContent = 'Click video to play or use VLC options below.';
+            showVlcFallback();
           });
         });
       }
 
-      activeMpegtsPlayer.on(mpegts.Events.ERROR, (type, detail, info) => {
-        console.warn('mpegts error:', type, detail, info);
-        if (overlayText) overlayText.textContent = 'Stream buffering or format unsupported. Use VLC options below.';
+      activeMpegtsPlayer.on(mpegts.Events.ERROR, () => {
+        if (videoWatchdogTimer) clearTimeout(videoWatchdogTimer);
+        showVlcFallback();
       });
 
     } catch (e) {
-      console.error('Failed to init mpegts player:', e);
-      videoElement.src = proxyUrl;
-      videoElement.play().then(() => { if (overlay) overlay.classList.add('hidden'); }).catch(() => {});
+      videoElement.src = directStreamUrl;
+      videoElement.play().catch(() => showVlcFallback());
     }
   } else {
-    // Native HLS/video fallback (Safari on iOS/macOS)
-    videoElement.src = proxyUrl;
-    videoElement.play().then(() => { if (overlay) overlay.classList.add('hidden'); }).catch(() => {});
+    // Safari direct playback
+    videoElement.src = directStreamUrl;
+    videoElement.play().catch(() => showVlcFallback());
   }
 }
 
 function destroyLiveVideoPlayer() {
+  if (videoWatchdogTimer) {
+    clearTimeout(videoWatchdogTimer);
+    videoWatchdogTimer = null;
+  }
   const videoElement = document.getElementById('live-video');
   if (activeMpegtsPlayer) {
     try {

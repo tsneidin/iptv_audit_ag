@@ -396,9 +396,9 @@
         <video id="live-video" class="w-full h-full object-contain" controls playsinline></video>
 
         <!-- Loading / Status Overlay -->
-        <div id="video-loading-overlay" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3 z-10 transition-opacity">
+        <div id="video-loading-overlay" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-3 z-10 transition-opacity">
           <i class="fa-solid fa-circle-notch fa-spin text-orange-500 text-3xl"></i>
-          <p id="video-loading-text" class="text-xs text-slate-300 font-medium">Connecting to stream via wg0 VPN...</p>
+          <p id="video-loading-text" class="text-xs text-slate-300 font-medium">Loading stream preview...</p>
         </div>
       </div>
 
@@ -409,38 +409,32 @@
             <i class="fa-solid fa-traffic-cone text-orange-500"></i>
             Open in VLC Media Player
           </span>
-          <span class="text-[10px] text-slate-400">Desktop / Mobile</span>
+          <span class="text-[10px] text-slate-400">Desktop Player</span>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+        <div class="flex items-center gap-2">
           <!-- Direct .m3u -->
-          <a id="video-btn-m3u-direct" href="#" download class="py-2.5 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium flex items-center justify-center gap-2 transition shadow-sm">
+          <a id="video-btn-m3u-direct" href="#" download class="flex-1 py-2.5 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold flex items-center justify-center gap-2 transition shadow-md shadow-orange-600/20 text-xs">
             <i class="fa-solid fa-download text-xs"></i>
             <span>Download .m3u for VLC</span>
-          </a>
-
-          <!-- VPN-routed .m3u -->
-          <a id="video-btn-m3u-vpn" href="#" download class="py-2.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium flex items-center justify-center gap-2 transition shadow-sm" title="Streams through Unraid wg0 VPN connection">
-            <i class="fa-solid fa-shield-halved text-xs"></i>
-            <span>Download .m3u (wg0 VPN)</span>
           </a>
         </div>
 
         <div class="space-y-1.5 pt-1">
-          <label class="text-[11px] text-slate-400 block">Stream URL (Paste into VLC: <kbd class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Cmd+N</kbd> or <kbd class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Ctrl+N</kbd>)</label>
+          <label class="text-[11px] text-slate-400 block">Stream URL (Paste into VLC: <kbd class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Cmd+N</kbd> on Mac or <kbd class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Ctrl+N</kbd> on Windows)</label>
           <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
             <input id="video-stream-url-field" readonly class="w-full bg-transparent px-3 py-1.5 text-xs text-slate-300 font-mono focus:outline-none truncate">
-            <button onclick="copyFieldValue('video-stream-url-field', this)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap text-xs">
-              <i class="fa-regular fa-copy"></i> Copy
+            <button onclick="copyFieldValue('video-stream-url-field', this)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap text-xs font-medium">
+              <i class="fa-regular fa-copy"></i> Copy URL
             </button>
           </div>
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-400">
           <button id="video-btn-copy-cli" type="button" class="text-orange-400 hover:text-orange-300 flex items-center gap-1 transition">
-            <i class="fa-solid fa-terminal text-[10px]"></i> Copy Mac/Linux Terminal Command
+            <i class="fa-solid fa-terminal text-[10px]"></i> Copy Mac Terminal Command (open -a VLC)
           </button>
-          <span class="text-slate-500 text-[10px]">Double-clicking the downloaded .m3u file launches VLC</span>
+          <span class="text-slate-500 text-[10px]">Opening the downloaded .m3u launches VLC</span>
         </div>
       </div>
 
@@ -457,6 +451,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js?v=1.5.0"></script>
+  <script src="/static/js/app.js?v=1.6.0"></script>
 </body>
 </html>

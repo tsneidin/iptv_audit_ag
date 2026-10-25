@@ -75,12 +75,7 @@ class TestAuditor(unittest.TestCase):
         self.assertIn("http://example.com/live/u/p/1.ts", resp.text)
         self.assertEqual(resp.headers["content-type"], "audio/x-mpegurl; charset=utf-8")
 
-        # 2. Proxy stream m3u (for VPN routing)
-        resp_proxy = client.get("/api/play/m3u?url=http://example.com/live/u/p/1.ts&title=BBC%20News&proxy=true")
-        self.assertEqual(resp_proxy.status_code, 200)
-        self.assertIn("/api/stream/proxy?url=", resp_proxy.text)
-
-        # 3. Invalid stream proxy check
+        # 2. Invalid stream proxy check
         resp_invalid = client.get("/api/stream/proxy?url=ftp://bad-url")
         self.assertEqual(resp_invalid.status_code, 400)
 
