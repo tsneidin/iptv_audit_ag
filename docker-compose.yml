@@ -1,0 +1,17 @@
+services:
+  iptv-audit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: iptv-audit:latest
+    container_name: iptv-audit
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8180}:8180"
+    environment:
+      - PORT=8180
+      - MAX_CONCURRENT_CHECKS=8
+      - REQUEST_TIMEOUT=6.0
+      - PROBE_STREAMS=true
+      - PROBE_TIMEOUT=4.0
+      - USER_AGENT=IPTVSmartersPlayer
