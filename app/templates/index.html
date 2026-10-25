@@ -25,7 +25,7 @@
       }
     }
   </script>
-  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/static/css/styles.css?v=1.2.0">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body class="bg-[#0f1418] text-slate-100 min-h-screen flex flex-col font-sans selection:bg-orange-600 selection:text-white">
@@ -103,7 +103,7 @@
 
           <div class="flex items-center gap-1.5">
             <label for="opt-concurrency" class="text-xs text-slate-400">Workers:</label>
-            <select id="opt-concurrency" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium">
+            <select id="opt-concurrency" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2.5 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium">
               <option value="10">10 Parallel</option>
               <option value="25" selected>25 Parallel (High Speed)</option>
               <option value="40">40 Parallel (Ultra)</option>
@@ -112,21 +112,24 @@
           </div>
         </div>
 
-        <!-- Start / Pause / Stop Buttons -->
-        <div class="flex items-center gap-2">
-          <button id="btn-pause" class="px-4 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-semibold text-xs transition hidden flex items-center gap-1.5">
+        <!-- Controls: Start, Pause, Stop (Always Visible) -->
+        <div class="flex items-center gap-2.5">
+          <!-- Start / Go Button -->
+          <button id="btn-audit" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-semibold text-xs shadow-lg shadow-orange-600/30 transition flex items-center gap-2">
+            <i id="btn-icon" class="fa-solid fa-play"></i>
+            <span id="btn-text">Audit Servers</span>
+          </button>
+
+          <!-- Pause / Resume Button -->
+          <button id="btn-pause" disabled class="px-4 py-2.5 rounded-xl bg-amber-600/20 text-amber-400/50 border border-amber-500/20 font-semibold text-xs transition flex items-center gap-1.5 cursor-not-allowed">
             <i id="pause-icon" class="fa-solid fa-pause"></i>
             <span id="pause-text">Pause</span>
           </button>
 
-          <button id="btn-stop" class="px-4 py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 font-semibold text-xs transition hidden flex items-center gap-1.5">
+          <!-- Stop Button -->
+          <button id="btn-stop" disabled class="px-4 py-2.5 rounded-xl bg-red-600/20 text-red-400/50 border border-red-500/20 font-semibold text-xs transition flex items-center gap-1.5 cursor-not-allowed">
             <i class="fa-solid fa-stop"></i>
             <span>Stop</span>
-          </button>
-
-          <button id="btn-audit" class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-semibold text-sm shadow-lg shadow-orange-600/30 transition flex items-center gap-2">
-            <i id="btn-icon" class="fa-solid fa-play"></i>
-            <span id="btn-text">Audit Servers</span>
           </button>
         </div>
       </div>
@@ -254,7 +257,7 @@
   </main>
 
   <!-- Notification Toast -->
-  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm">
+  <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm pointer-events-none">
     <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
     <span id="toast-message">Copied to clipboard!</span>
   </div>
@@ -263,6 +266,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js"></script>
+  <script src="/static/js/app.js?v=1.2.0"></script>
 </body>
 </html>

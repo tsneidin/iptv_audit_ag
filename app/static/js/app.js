@@ -98,7 +98,7 @@ btnAudit.addEventListener('click', () => {
 
 // Pause / Resume Button
 btnPause.addEventListener('click', async () => {
-  if (!currentSessionId) return;
+  if (!currentSessionId || !isAuditing) return;
 
   if (!isPaused) {
     // Request Pause
@@ -107,8 +107,8 @@ btnPause.addEventListener('click', async () => {
       isPaused = true;
       pauseIcon.className = 'fa-solid fa-play';
       pauseText.textContent = 'Resume';
-      btnPause.classList.remove('text-amber-300', 'bg-amber-600/20', 'border-amber-500/30');
-      btnPause.classList.add('text-emerald-300', 'bg-emerald-600/20', 'border-emerald-500/30');
+      btnPause.classList.remove('bg-amber-600/20', 'text-amber-300', 'border-amber-500/30');
+      btnPause.classList.add('bg-emerald-600/30', 'text-emerald-300', 'border-emerald-500/40');
       progressStatus.textContent = 'Audit Paused';
       globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span> Paused`;
       showToast('Audit paused.');
@@ -122,8 +122,8 @@ btnPause.addEventListener('click', async () => {
       isPaused = false;
       pauseIcon.className = 'fa-solid fa-pause';
       pauseText.textContent = 'Pause';
-      btnPause.classList.remove('text-emerald-300', 'bg-emerald-600/20', 'border-emerald-500/30');
-      btnPause.classList.add('text-amber-300', 'bg-amber-600/20', 'border-amber-500/30');
+      btnPause.classList.remove('bg-emerald-600/30', 'text-emerald-300', 'border-emerald-500/40');
+      btnPause.classList.add('bg-amber-600/20', 'text-amber-300', 'border-amber-500/30');
       progressStatus.textContent = 'Resuming audit...';
       globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span> Auditing...`;
       showToast('Audit resumed.');
@@ -173,7 +173,7 @@ async function startAudit(text) {
 
   updateStats();
   progressBar.style.width = '3%';
-  progressStatus.textContent = 'Contacting server...';
+  progressStatus.textContent = 'Connecting...';
   progressCount.textContent = '0%';
   speedMeter.textContent = '';
 
@@ -221,7 +221,6 @@ async function startAudit(text) {
     }
   } catch (err) {
     if (err.name === 'AbortError') {
-      // Stopped gracefully
       return;
     }
     showToast(`Audit failed: ${err.message}`, 'error');
@@ -287,16 +286,34 @@ function setControlButtonsState(active) {
     btnAudit.classList.add('opacity-50', 'cursor-not-allowed');
     btnIcon.className = 'fa-solid fa-spinner fa-spin';
     btnText.textContent = 'Auditing...';
-    btnPause.classList.remove('hidden');
-    btnStop.classList.remove('hidden');
+
+    // Enable Pause & Stop
+    btnPause.disabled = false;
+    btnPause.classList.remove('text-amber-400/50', 'border-amber-500/20', 'cursor-not-allowed');
+    btnPause.classList.add('text-amber-300', 'border-amber-500/40', 'hover:bg-amber-600/30', 'cursor-pointer');
+    pauseIcon.className = 'fa-solid fa-pause';
+    pauseText.textContent = 'Pause';
+
+    btnStop.disabled = false;
+    btnStop.classList.remove('text-red-400/50', 'border-red-500/20', 'cursor-not-allowed');
+    btnStop.classList.add('text-red-300', 'border-red-500/40', 'hover:bg-red-600/30', 'cursor-pointer');
+
     globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span> Auditing...`;
   } else {
     btnAudit.disabled = false;
     btnAudit.classList.remove('opacity-50', 'cursor-not-allowed');
     btnIcon.className = 'fa-solid fa-play';
     btnText.textContent = 'Audit Servers';
-    btnPause.classList.add('hidden');
-    btnStop.classList.add('hidden');
+
+    // Disable Pause & Stop
+    btnPause.disabled = true;
+    btnPause.className = 'px-4 py-2.5 rounded-xl bg-amber-600/20 text-amber-400/50 border border-amber-500/20 font-semibold text-xs transition flex items-center gap-1.5 cursor-not-allowed';
+    pauseIcon.className = 'fa-solid fa-pause';
+    pauseText.textContent = 'Pause';
+
+    btnStop.disabled = true;
+    btnStop.className = 'px-4 py-2.5 rounded-xl bg-red-600/20 text-red-400/50 border border-red-500/20 font-semibold text-xs transition flex items-center gap-1.5 cursor-not-allowed';
+
     globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Ready`;
   }
 }
@@ -411,10 +428,10 @@ function renderTable() {
 
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5">
-            <button onclick="copyToClipboard('${escapeJs(r.m3u_url)}', 'M3U link copied!')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="Copy M3U URL">
+            <button onclick="copyM3U('${escapeJs(r.m3u_url)}', this)" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center w-7 h-7" title="Copy M3U URL">
               <i class="fa-solid fa-link text-xs"></i>
             </button>
-            <button onclick="copyXtream('${escapeJs(r.host)}', '${escapeJs(r.username)}', '${escapeJs(r.password)}')" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition" title="Copy Xtream Credentials">
+            <button onclick="copyXtream('${escapeJs(r.host)}', '${escapeJs(r.username)}', '${escapeJs(r.password)}', this)" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center w-7 h-7" title="Copy Xtream Credentials">
               <i class="fa-solid fa-key text-xs"></i>
             </button>
           </div>
@@ -424,17 +441,74 @@ function renderTable() {
   }).join('');
 }
 
+// Universal Clipboard function (supports HTTPS, HTTP, and LAN IPs)
 window.copyToClipboard = function(text, msg = 'Copied to clipboard!') {
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(msg);
-  }).catch(() => {
-    showToast('Failed to copy', 'error');
-  });
+  if (!text) return;
+
+  // Try modern navigator.clipboard if in secure context
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(msg);
+    }).catch(() => {
+      fallbackCopyText(text, msg);
+    });
+    return;
+  }
+
+  // Universal HTTP LAN fallback using temporary textarea
+  fallbackCopyText(text, msg);
 };
 
-window.copyXtream = function(host, user, pass) {
-  const jsonStr = `Server: ${host}\nUsername: ${user}\nPassword: ${pass}`;
-  window.copyToClipboard(jsonStr, 'Xtream credentials copied!');
+function fallbackCopyText(text, msg) {
+  const textArea = document.createElement('textarea');
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'absolute';
+  textArea.style.left = '-9999px';
+  textArea.style.top = (window.pageYOffset || document.documentElement.scrollTop) + 'px';
+  document.body.appendChild(textArea);
+  textArea.select();
+  textArea.setSelectionRange(0, textArea.value.length);
+
+  try {
+    const successful = document.execCommand('copy');
+    if (successful) {
+      showToast(msg);
+    } else {
+      prompt('Copy to clipboard manually: Ctrl+C, Enter', text);
+    }
+  } catch (err) {
+    prompt('Copy to clipboard manually: Ctrl+C, Enter', text);
+  } finally {
+    document.body.removeChild(textArea);
+  }
+}
+
+// Copy M3U with icon animation
+window.copyM3U = function(url, btnElement) {
+  window.copyToClipboard(url, 'M3U link copied to clipboard!');
+  if (btnElement) {
+    const icon = btnElement.querySelector('i');
+    if (icon) {
+      const original = icon.className;
+      icon.className = 'fa-solid fa-check text-emerald-400 text-xs';
+      setTimeout(() => { icon.className = original; }, 1500);
+    }
+  }
+};
+
+// Copy Xtream format with icon animation
+window.copyXtream = function(host, user, pass, btnElement) {
+  const text = `Host: ${host}\nUser: ${user}\nPass: ${pass}`;
+  window.copyToClipboard(text, 'Xtream credentials copied!');
+  if (btnElement) {
+    const icon = btnElement.querySelector('i');
+    if (icon) {
+      const original = icon.className;
+      icon.className = 'fa-solid fa-check text-emerald-400 text-xs';
+      setTimeout(() => { icon.className = original; }, 1500);
+    }
+  }
 };
 
 btnCopyWorking.addEventListener('click', () => {
@@ -444,9 +518,7 @@ btnCopyWorking.addEventListener('click', () => {
     return;
   }
   const text = working.join('\n');
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(`Copied ${working.length} active M3U URLs!`);
-  });
+  window.copyToClipboard(text, `Copied ${working.length} active M3U URLs!`);
 });
 
 btnExportCsv.addEventListener('click', async () => {
@@ -493,7 +565,7 @@ function showToast(message, type = 'success') {
   setTimeout(() => {
     toast.classList.add('translate-y-20', 'opacity-0');
     toast.classList.remove('translate-y-0', 'opacity-100');
-  }, 3000);
+  }, 2500);
 }
 
 function escapeHtml(str) {
