@@ -133,10 +133,29 @@ def decode_token_to_url(token: str) -> str:
     return ""
 
 
+def is_stream_channel_url(url: str) -> bool:
+    """
+    Returns True if the URL is an individual channel/movie/series stream
+    (e.g. http://host:port/live/user/pass/123.ts), which should be parsed directly
+    as credentials rather than fetched as an external playlist source.
+    """
+    try:
+        parsed = urlparse(url)
+        parts = [p for p in parsed.path.split("/") if p]
+        if len(parts) >= 4 and parts[0] in ("live", "movie", "series"):
+            return True
+        if parts and parts[-1].endswith((".ts", ".mp4", ".mkv", ".avi")):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def extract_urls_from_input(user_input: str) -> List[str]:
     """
     Parses user input containing multiple lines, comma-separated tokens,
     or mixed raw URLs and encoded strings.
+    Ignores individual channel stream URLs (which are parsed directly by parser).
     """
     # Split by commas or newlines
     tokens = re.split(r"[\n,\r\t]+", user_input)
@@ -152,13 +171,13 @@ def extract_urls_from_input(user_input: str) -> List[str]:
         raw_matches = re.findall(r"https?://[^\s\"'<>]+", token)
         if raw_matches:
             for u in raw_matches:
-                if u not in seen:
+                if not is_stream_channel_url(u) and u not in seen:
                     seen.add(u)
                     urls.append(u)
             continue
 
         url = decode_token_to_url(token)
-        if url and url not in seen:
+        if url and not is_stream_channel_url(url) and url not in seen:
             seen.add(url)
             urls.append(url)
 

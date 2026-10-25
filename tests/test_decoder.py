@@ -20,5 +20,18 @@ class TestDecoder(unittest.TestCase):
         self.assertIn("https://paste.sh/_ZxlA9V5#2eX2OU7r7p83nRt8WS5WbJQX", urls)
         self.assertIn("https://direct.example.com/test#key", urls)
 
+    def test_ignore_channel_streams_in_m3u(self):
+        # Channel stream URLs in an M3U file should NOT be returned as external playlist sources
+        m3u_text = """#EXTM3U
+#EXTINF:-1,Channel 1
+http://example.com:8080/live/user1/pass1/1001.ts
+#EXTINF:-1,Channel 2
+http://example.com:8080/live/user1/pass1/1002.ts
+https://paste.sh/real-source#key123
+"""
+        urls = extract_urls_from_input(m3u_text)
+        self.assertEqual(len(urls), 1)
+        self.assertEqual(urls[0], "https://paste.sh/real-source#key123")
+
 if __name__ == "__main__":
     unittest.main()

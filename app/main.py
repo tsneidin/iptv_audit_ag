@@ -118,22 +118,18 @@ async def run_audit_stream(payload: AuditRequest, session: AuditSession) -> Asyn
     yield f"data: {json.dumps({'type': 'session_init', 'session_id': session.session_id})}\n\n"
     yield f"data: {json.dumps({'type': 'status', 'message': 'Extracting and decoding URLs...'})}\n\n"
 
+    # 1. Parse any direct credentials/servers from input text (M3U files, credentials, tabular format)
+    all_servers: List[IPTVServer] = extract_iptv_servers(payload.input_text)
+    seen_keys = {s.key for s in all_servers}
+
+    # 2. Extract external URLs to fetch (paste.sh, web playlists, etc.)
     urls = extract_urls_from_input(payload.input_text)
-    if not urls:
-        direct_servers = extract_iptv_servers(payload.input_text)
-        if not direct_servers:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'No valid URLs, encoded strings, or IPTV credentials found in input.'})}\n\n"
-            return
-        all_servers = direct_servers
-    else:
-        yield f"data: {json.dumps({'type': 'extracted_urls', 'urls': urls, 'message': f'Found {len(urls)} sources to fetch and decode.'})}\n\n"
+    if urls:
+        yield f"data: {json.dumps({'type': 'extracted_urls', 'urls': urls, 'message': f'Found {len(urls)} external source(s) to fetch.'})}\n\n"
 
         # High-performance fetch pool
         limits = httpx.Limits(max_keepalive_connections=50, max_connections=100)
         async with httpx.AsyncClient(verify=False, limits=limits, timeout=config.REQUEST_TIMEOUT) as client:
-            all_servers: List[IPTVServer] = []
-            seen_keys = set()
-
             for idx, url in enumerate(urls, 1):
                 if session.is_stopped:
                     yield f"data: {json.dumps({'type': 'audit_stopped', 'message': 'Audit stopped by user.'})}\n\n"
@@ -153,7 +149,7 @@ async def run_audit_stream(payload: AuditRequest, session: AuditSession) -> Asyn
                     yield f"data: {json.dumps({'type': 'warning', 'message': f'Failed to process source: {str(e)}'})}\n\n"
 
     if not all_servers:
-        yield f"data: {json.dumps({'type': 'error', 'message': 'No IPTV servers could be extracted from the provided sources.'})}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'message': 'No valid IPTV servers could be extracted.'})}\n\n"
         return
 
     total = len(all_servers)

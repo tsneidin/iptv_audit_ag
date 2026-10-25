@@ -68,6 +68,7 @@ btnClear.addEventListener('click', () => {
 // Search input
 searchInput.addEventListener('input', (e) => {
   searchQuery = e.target.value.toLowerCase().trim();
+  currentPage = 1;
   renderTable();
 });
 
@@ -81,6 +82,7 @@ filterBtns.forEach(btn => {
     btn.classList.add('bg-orange-600', 'text-white');
     btn.classList.remove('text-slate-400');
     currentFilter = btn.dataset.filter;
+    currentPage = 1;
     renderTable();
   });
 });
@@ -247,7 +249,6 @@ function handleSSEEvent(event) {
   } else if (event.type === 'server_result') {
     const data = event.data;
     allResults.push(data);
-    updateStats();
 
     if (data.total && data.completed) {
       const pct = Math.round((data.completed / data.total) * 100);
@@ -263,8 +264,16 @@ function handleSSEEvent(event) {
       }
     }
 
-    renderTable();
+    // High performance throttled rendering (batches DOM updates to prevent UI lockup)
+    scheduleRender();
   } else if (event.type === 'audit_complete') {
+    if (renderThrottleTimer) {
+      clearTimeout(renderThrottleTimer);
+      renderThrottleTimer = null;
+    }
+    updateStats();
+    renderTable();
+
     progressBar.style.width = '100%';
     progressCount.textContent = '100%';
     const elapsedSec = ((Date.now() - auditStartTime) / 1000).toFixed(1);
@@ -318,6 +327,63 @@ function setControlButtonsState(active) {
   }
 }
 
+let renderThrottleTimer = null;
+function scheduleRender() {
+  if (renderThrottleTimer) return;
+  renderThrottleTimer = setTimeout(() => {
+    renderThrottleTimer = null;
+    updateStats();
+    renderTable();
+  }, 120);
+}
+
+let currentPage = 1;
+let pageSize = 50;
+
+const selectPageSize = document.getElementById('select-page-size');
+const btnPageFirst = document.getElementById('btn-page-first');
+const btnPagePrev = document.getElementById('btn-page-prev');
+const btnPageNext = document.getElementById('btn-page-next');
+const btnPageLast = document.getElementById('btn-page-last');
+const paginationInfo = document.getElementById('pagination-info');
+const paginationPageDisplay = document.getElementById('pagination-page-display');
+
+selectPageSize?.addEventListener('change', () => {
+  pageSize = parseInt(selectPageSize.value, 10) || 50;
+  currentPage = 1;
+  renderTable();
+});
+
+btnPageFirst?.addEventListener('click', () => {
+  if (currentPage > 1) {
+    currentPage = 1;
+    renderTable();
+  }
+});
+
+btnPagePrev?.addEventListener('click', () => {
+  if (currentPage > 1) {
+    currentPage--;
+    renderTable();
+  }
+});
+
+btnPageNext?.addEventListener('click', () => {
+  const totalPages = Math.ceil(currentFilteredList.length / pageSize) || 1;
+  if (currentPage < totalPages) {
+    currentPage++;
+    renderTable();
+  }
+});
+
+btnPageLast?.addEventListener('click', () => {
+  const totalPages = Math.ceil(currentFilteredList.length / pageSize) || 1;
+  if (currentPage < totalPages) {
+    currentPage = totalPages;
+    renderTable();
+  }
+});
+
 function updateStats() {
   statTotal.textContent = allResults.length;
   statWorking.textContent = allResults.filter(r => r.is_working).length;
@@ -347,7 +413,8 @@ function renderTable() {
     return true;
   });
 
-  if (currentFilteredList.length === 0) {
+  const totalItems = currentFilteredList.length;
+  if (totalItems === 0) {
     resultsTbody.innerHTML = `
       <tr>
         <td colspan="11" class="text-center py-8 text-slate-500">
@@ -355,10 +422,36 @@ function renderTable() {
         </td>
       </tr>
     `;
+    if (paginationInfo) paginationInfo.textContent = 'Showing 0 of 0 servers';
+    if (paginationPageDisplay) paginationPageDisplay.textContent = 'Page 1 of 1';
+    if (btnPageFirst) btnPageFirst.disabled = true;
+    if (btnPagePrev) btnPagePrev.disabled = true;
+    if (btnPageNext) btnPageNext.disabled = true;
+    if (btnPageLast) btnPageLast.disabled = true;
     return;
   }
 
-  resultsTbody.innerHTML = currentFilteredList.map((r, idx) => {
+  const totalPages = Math.ceil(totalItems / pageSize) || 1;
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, totalItems);
+  const pageItems = currentFilteredList.slice(startIdx, endIdx);
+
+  if (paginationInfo) {
+    paginationInfo.textContent = `Showing ${startIdx + 1}–${endIdx} of ${totalItems.toLocaleString()} servers`;
+  }
+  if (paginationPageDisplay) {
+    paginationPageDisplay.textContent = `Page ${currentPage} of ${totalPages}`;
+  }
+  if (btnPageFirst) btnPageFirst.disabled = (currentPage <= 1);
+  if (btnPagePrev) btnPagePrev.disabled = (currentPage <= 1);
+  if (btnPageNext) btnPageNext.disabled = (currentPage >= totalPages);
+  if (btnPageLast) btnPageLast.disabled = (currentPage >= totalPages);
+
+  resultsTbody.innerHTML = pageItems.map((r, itemIdx) => {
+    const idx = startIdx + itemIdx;
     let statusClass = 'bg-slate-800 text-slate-400 border-slate-700';
     let statusIcon = 'fa-circle-question';
     if (r.status_badge === 'active') {

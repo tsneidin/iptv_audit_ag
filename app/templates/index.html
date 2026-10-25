@@ -243,6 +243,39 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Pagination & Performance Footer -->
+      <div id="pagination-bar" class="px-4 py-3 bg-slate-900/80 border-t border-unraid-border flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+        <div class="flex items-center gap-3">
+          <span id="pagination-info">Showing 0–0 of 0 servers</span>
+          <div class="flex items-center gap-1.5">
+            <label for="select-page-size" class="text-[11px] text-slate-500">Per page:</label>
+            <select id="select-page-size" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2 py-0.5 text-slate-300 focus:outline-none focus:border-orange-500">
+              <option value="25">25</option>
+              <option value="50" selected>50</option>
+              <option value="100">100</option>
+              <option value="250">250</option>
+              <option value="100000">All</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button id="btn-page-first" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 text-xs transition" title="First Page">
+            <i class="fa-solid fa-angles-left"></i>
+          </button>
+          <button id="btn-page-prev" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 text-xs transition" title="Previous Page">
+            <i class="fa-solid fa-angle-left"></i> Prev
+          </button>
+          <span id="pagination-page-display" class="px-3 font-mono text-xs text-slate-300 font-medium">Page 1 of 1</span>
+          <button id="btn-page-next" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 text-xs transition" title="Next Page">
+            Next <i class="fa-solid fa-angle-right"></i>
+          </button>
+          <button id="btn-page-last" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:hover:bg-slate-800 text-slate-300 text-xs transition" title="Last Page">
+            <i class="fa-solid fa-angles-right"></i>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Empty State -->
@@ -499,6 +532,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js?v=1.7.0"></script>
+  <script src="/static/js/app.js?v=1.8.0"></script>
 </body>
 </html>
