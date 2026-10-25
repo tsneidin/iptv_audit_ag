@@ -322,7 +322,14 @@ function updateStats() {
   statTotal.textContent = allResults.length;
   statWorking.textContent = allResults.filter(r => r.is_working).length;
   statFailed.textContent = allResults.filter(r => !r.is_working).length;
-  statAdult.textContent = allResults.filter(r => r.has_adult).length;
+  
+  const adultServers = allResults.filter(r => r.has_adult).length;
+  const totalAdultCh = allResults.reduce((sum, r) => sum + (r.adult_channels || 0), 0);
+  if (totalAdultCh > 0) {
+    statAdult.innerHTML = `${adultServers} <span class="text-xs font-normal text-pink-300">(${totalAdultCh.toLocaleString()} ch)</span>`;
+  } else {
+    statAdult.textContent = adultServers;
+  }
 }
 
 function renderTable() {
@@ -368,9 +375,12 @@ function renderTable() {
     else if (r.stream_probe_badge === 'yellow') streamClass = 'text-amber-400';
     else if (r.stream_probe_badge === 'red') streamClass = 'text-red-400';
 
-    const adultBadge = r.has_adult 
-      ? `<span class="px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 font-medium" title="${escapeHtml(r.adult_details)}"><i class="fa-solid fa-venus-mars mr-1"></i>Yes</span>`
-      : `<span class="text-slate-500">None</span>`;
+    let adultBadge = '<span class="text-slate-500 font-mono text-xs">0</span>';
+    if (r.adult_channels > 0) {
+      adultBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-pink-500/15 text-pink-400 border border-pink-500/30 font-semibold font-mono text-xs" title="${escapeHtml(r.adult_details)}"><i class="fa-solid fa-venus-mars text-[10px]"></i>${r.adult_channels.toLocaleString()} ch</span>`;
+    } else if (r.has_adult) {
+      adultBadge = `<span class="px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 text-xs font-medium" title="${escapeHtml(r.adult_details)}">Yes (VOD)</span>`;
+    }
 
     const latencyTag = r.latency_ms > 0 ? `<span class="text-[10px] text-slate-500 font-mono ml-1">(${r.latency_ms}ms)</span>` : '';
 

@@ -12,7 +12,7 @@ from app.parser import IPTVServer
 
 logger = logging.getLogger(__name__)
 
-# Fast pre-compiled regex for adult keywords
+# Fast pre-compiled regex for adult keywords matching 'adult', 'xxx', and variations
 ADULT_REGEX = re.compile(
     r"(?i)(?:\b(xxx|adult|porn|erotic|playboy|hustler|redlight|red\s*light|brazzers|dorcel|penthouse|vivid|sensual|babes)\b|\b18\+|\+18|for\s*adult)"
 )
@@ -33,6 +33,7 @@ class AuditResult(BaseModel):
     movies_vod: int = 0
     series: int = 0
     has_adult: bool = False
+    adult_channels: int = 0  # Exact count of channels matching adult / xxx
     adult_details: str = "None"
     stream_probe: str = "Skipped"
     stream_probe_badge: str = "gray"  # green, yellow, red, gray
@@ -137,8 +138,8 @@ async def audit_iptv_server(
     """
     High-performance tester against Xtream Codes API.
     Uses dead-host caching to avoid timeout lag on dead domains.
+    Counts exact adult channels matching 'adult' or 'xxx'.
     """
-    # Check if host is already known to be dead/offline
     if dead_host_cache is not None and server.host in dead_host_cache:
         cached_reason = dead_host_cache[server.host]
         return AuditResult(
@@ -206,7 +207,6 @@ async def audit_iptv_server(
                 error_message="Missing user_info in response",
             )
 
-        # Auth & account status check
         auth = user_info.get("auth")
         raw_status = str(user_info.get("status", "")).strip().capitalize()
         if auth == 0 or raw_status.lower() in ("disabled", "banned", "deleted"):
@@ -222,7 +222,6 @@ async def audit_iptv_server(
                 error_message=user_info.get("message") or "Authentication failed",
             )
 
-        # Expiration
         exp_date_raw = user_info.get("exp_date")
         exp_str, exp_countdown = format_expiration(exp_date_raw)
         is_expired = bool(exp_countdown and "Expired" in exp_countdown)
@@ -235,6 +234,8 @@ async def audit_iptv_server(
         series_count = 0
         adult_detected = False
         adult_matches: List[str] = []
+        adult_live_cids: List[str] = []
+        adult_channel_ids = set()
         candidate_stream_id = None
 
         async def fetch_endpoint(action: str):
@@ -250,8 +251,7 @@ async def audit_iptv_server(
                 pass
             return None
 
-        # TURBO MODE: Query categories + live streams for probe candidate
-        # Skips multi-megabyte VOD stream array downloads for 10x - 50x speedup
+        # TURBO MODE: Query categories + live streams for probe candidate & adult category channels
         if audit_mode == "turbo":
             live_cats_res, vod_cats_res, series_cats_res, live_sample_res = await asyncio.gather(
                 fetch_endpoint("get_live_categories"),
@@ -260,15 +260,19 @@ async def audit_iptv_server(
                 fetch_endpoint("get_live_streams") if probe_stream else asyncio.sleep(0),
             )
 
+            # 1. Identify adult live categories
             if isinstance(live_cats_res, list):
                 live_count = len(live_cats_res)
                 for cat in live_cats_res:
                     name = cat.get("category_name", "")
+                    cid = str(cat.get("category_id"))
                     if check_adult(name):
                         adult_detected = True
+                        adult_live_cids.append(cid)
                         if len(adult_matches) < 3:
                             adult_matches.append(name)
 
+            # 2. Check adult VOD categories
             if isinstance(vod_cats_res, list):
                 vod_count = len(vod_cats_res)
                 for cat in vod_cats_res:
@@ -281,8 +285,23 @@ async def audit_iptv_server(
             if isinstance(series_cats_res, list):
                 series_count = len(series_cats_res)
 
+            # 3. Fetch exact adult channel counts for detected adult categories in parallel
+            if adult_live_cids:
+                adult_stream_tasks = [
+                    fetch_endpoint(f"get_live_streams&category_id={cid}")
+                    for cid in adult_live_cids
+                ]
+                adult_stream_resps = await asyncio.gather(*adult_stream_tasks)
+                for s_list in adult_stream_resps:
+                    if isinstance(s_list, list):
+                        for ch in s_list:
+                            sid = ch.get("stream_id")
+                            if sid:
+                                adult_channel_ids.add(sid)
+
+            # 4. Check live sample streams for candidate probe & direct name matches
             if isinstance(live_sample_res, list):
-                live_count = len(live_sample_res)  # Exact live count if available
+                live_count = len(live_sample_res)
                 for item in live_sample_res:
                     sid = item.get("stream_id")
                     sname = item.get("name", "")
@@ -290,10 +309,8 @@ async def audit_iptv_server(
                         candidate_stream_id = sid
                     if check_adult(sname):
                         adult_detected = True
-                        if len(adult_matches) < 3:
-                            adult_matches.append(sname)
-                    if candidate_stream_id and adult_detected:
-                        break
+                        if sid:
+                            adult_channel_ids.add(sid)
 
         else:
             # DEEP CRAWL MODE: Full catalog download
@@ -304,16 +321,29 @@ async def audit_iptv_server(
                 fetch_endpoint("get_live_categories"),
             )
 
+            if isinstance(live_cats_res, list):
+                for cat in live_cats_res:
+                    cat_name = cat.get("category_name", "")
+                    if check_adult(cat_name):
+                        adult_detected = True
+                        adult_live_cids.append(str(cat.get("category_id")))
+                        if len(adult_matches) < 3:
+                            adult_matches.append(cat_name)
+
             if isinstance(live_res, list):
                 live_count = len(live_res)
                 for item in live_res:
-                    name = item.get("name", "")
-                    if not candidate_stream_id and item.get("stream_id") and not name.startswith(("-=", "###", "===")):
-                        candidate_stream_id = item.get("stream_id")
-                    if check_adult(name):
+                    sid = item.get("stream_id")
+                    sname = item.get("name", "")
+                    scat = str(item.get("category_id", ""))
+                    if not candidate_stream_id and sid and not sname.startswith(("-=", "###", "===")):
+                        candidate_stream_id = sid
+                    if scat in adult_live_cids or check_adult(sname):
                         adult_detected = True
-                        if len(adult_matches) < 3:
-                            adult_matches.append(name)
+                        if sid:
+                            adult_channel_ids.add(sid)
+                        if len(adult_matches) < 3 and sname:
+                            adult_matches.append(sname)
 
             if isinstance(vod_res, list):
                 vod_count = len(vod_res)
@@ -326,17 +356,14 @@ async def audit_iptv_server(
             if isinstance(series_res, list):
                 series_count = len(series_res)
 
-            if isinstance(live_cats_res, list):
-                for cat in live_cats_res:
-                    cat_name = cat.get("category_name", "")
-                    if check_adult(cat_name):
-                        adult_detected = True
-                        if len(adult_matches) < 3:
-                            adult_matches.append(cat_name)
-
-        adult_details = "None"
-        if adult_detected:
-            adult_details = f"Yes ({', '.join(adult_matches[:2])})" if adult_matches else "Yes"
+        adult_channels_count = len(adult_channel_ids)
+        if adult_channels_count > 0:
+            adult_detected = True
+            adult_details = f"{adult_channels_count} channels"
+        elif adult_detected:
+            adult_details = f"Yes ({', '.join(adult_matches[:2])})" if adult_matches else "Yes (VOD)"
+        else:
+            adult_details = "None"
 
         # Stream Probing
         stream_probe_status = "Skipped"
@@ -368,6 +395,7 @@ async def audit_iptv_server(
             movies_vod=vod_count,
             series=series_count,
             has_adult=adult_detected,
+            adult_channels=adult_channels_count,
             adult_details=adult_details,
             stream_probe=stream_probe_status,
             stream_probe_badge=stream_badge,
