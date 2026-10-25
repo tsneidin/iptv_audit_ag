@@ -446,16 +446,21 @@ function renderTable() {
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5">
             ${r.is_working && (r.vlc_url || r.test_stream_url) ? `
+              <button onclick="playStreamInBrowser(${idx})" 
+                      class="p-1.5 rounded-lg bg-orange-600 hover:bg-orange-500 text-white transition flex items-center justify-center w-7 h-7 shadow-md shadow-orange-600/30 group" 
+                      title="Play ${escapeHtml(r.test_channel_name || 'Live Channel')} in Browser">
+                <i class="fa-solid fa-play text-xs group-hover:scale-110 transition-transform"></i>
+              </button>
               <a href="/api/play/m3u?url=${encodeURIComponent(r.test_stream_url || '')}&title=${encodeURIComponent(r.test_channel_name || 'BBC News')}" 
                  onclick="onPlayClick('${escapeJs(r.test_stream_url || '')}', '${escapeJs(r.test_channel_name || 'BBC News')}')" 
                  download 
-                 class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" 
-                 title="Play ${escapeHtml(r.test_channel_name || 'BBC News')} in VLC">
-                <i class="fa-solid fa-play text-xs"></i>
+                 class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center w-7 h-7" 
+                 title="Download .m3u for VLC">
+                <i class="fa-solid fa-download text-xs"></i>
               </a>
             ` : ''}
             ${r.is_working ? `
-              <button onclick="openStreamPlayerModal(${idx})" class="p-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center justify-center w-7 h-7" title="Preview Stream & Player Details">
+              <button onclick="openPlayerModalByIndex(${idx})" class="p-1.5 rounded-lg bg-cyan-600/20 hover:bg-cyan-600/40 text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 transition flex items-center justify-center w-7 h-7" title="UHF / Chillio / IPTVX Credentials">
                 <i class="fa-solid fa-tv text-xs"></i>
               </button>
             ` : ''}
@@ -613,6 +618,151 @@ function escapeJs(str) {
   if (!str) return '';
   return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
+
+// ==========================================
+// In-Browser Instant Floating Live Player
+// ==========================================
+let activePipMpegts = null;
+let currentPipStreamUrl = null;
+let isPipExpanded = false;
+
+window.playStreamInBrowser = function(idx) {
+  const r = currentFilteredList[idx];
+  if (!r || !r.test_stream_url) {
+    showToast('No playable stream found for this server.', 'error');
+    return;
+  }
+
+  currentPipStreamUrl = r.test_stream_url;
+  const chName = r.test_channel_name || 'Live Channel';
+
+  const pipContainer = document.getElementById('pip-player-container');
+  const titleEl = document.getElementById('pip-channel-title');
+  const hostEl = document.getElementById('pip-channel-host');
+  const btnM3u = document.getElementById('pip-btn-m3u');
+  const video = document.getElementById('pip-video');
+  const overlay = document.getElementById('pip-loading-overlay');
+  const loadingText = document.getElementById('pip-loading-text');
+
+  titleEl.textContent = chName;
+  hostEl.textContent = r.host || '';
+  btnM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}`;
+
+  pipContainer.classList.remove('hidden');
+  overlay.classList.remove('hidden');
+  loadingText.textContent = `Connecting to ${chName}...`;
+
+  // Destroy previous stream player if one was running
+  if (activePipMpegts) {
+    try {
+      activePipMpegts.pause();
+      activePipMpegts.unload();
+      activePipMpegts.detachMediaElement();
+      activePipMpegts.destroy();
+    } catch(e) {}
+    activePipMpegts = null;
+  }
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+
+  // Use local backend proxy which handles redirects and strips CORS restrictions
+  const proxyUrl = `/api/stream/proxy?url=${encodeURIComponent(r.test_stream_url)}`;
+
+  if (window.mpegts && window.mpegts.getFeatureList().mseLivePlayback) {
+    try {
+      activePipMpegts = mpegts.createPlayer({
+        type: 'mse',
+        isLive: true,
+        url: proxyUrl,
+      }, {
+        enableStashBuffer: false,
+        liveBufferLatencyChasing: true,
+        autoCleanupSourceBuffer: true,
+      });
+
+      activePipMpegts.attachMediaElement(video);
+      activePipMpegts.load();
+
+      const p = activePipMpegts.play();
+      if (p !== undefined) {
+        p.then(() => {
+          overlay.classList.add('hidden');
+        }).catch(() => {
+          // Autoplay policy: start muted so video plays immediately without blocking
+          video.muted = true;
+          activePipMpegts.play().then(() => {
+            overlay.classList.add('hidden');
+            showToast(`Playing ${chName} (muted — tap video to unmute)`);
+          }).catch(() => {
+            loadingText.textContent = 'Click video to start playback';
+          });
+        });
+      }
+
+      activePipMpegts.on(mpegts.Events.ERROR, (type, detail) => {
+        console.warn('mpegts error:', type, detail);
+        loadingText.textContent = 'Stream buffering or unavailable.';
+      });
+
+    } catch (e) {
+      console.error(e);
+      video.src = proxyUrl;
+      video.play().then(() => overlay.classList.add('hidden')).catch(() => {});
+    }
+  } else {
+    // Safari direct playback
+    video.src = proxyUrl;
+    video.play().then(() => overlay.classList.add('hidden')).catch(() => {});
+  }
+
+  video.onplaying = () => {
+    overlay.classList.add('hidden');
+  };
+};
+
+window.closePipPlayer = function() {
+  if (activePipMpegts) {
+    try {
+      activePipMpegts.pause();
+      activePipMpegts.unload();
+      activePipMpegts.detachMediaElement();
+      activePipMpegts.destroy();
+    } catch(e) {}
+    activePipMpegts = null;
+  }
+  const video = document.getElementById('pip-video');
+  if (video) {
+    video.pause();
+    video.removeAttribute('src');
+    video.load();
+  }
+  const pipContainer = document.getElementById('pip-player-container');
+  if (pipContainer) pipContainer.classList.add('hidden');
+};
+
+window.togglePipExpand = function() {
+  const container = document.getElementById('pip-player-container');
+  const icon = document.getElementById('pip-expand-icon');
+  if (!container) return;
+
+  isPipExpanded = !isPipExpanded;
+  if (isPipExpanded) {
+    container.classList.remove('w-80', 'sm:w-96');
+    container.classList.add('w-[90vw]', 'max-w-3xl');
+    icon.className = 'fa-solid fa-down-left-and-up-right-to-center';
+  } else {
+    container.classList.remove('w-[90vw]', 'max-w-3xl');
+    container.classList.add('w-80', 'sm:w-96');
+    icon.className = 'fa-solid fa-up-right-and-down-left-from-center';
+  }
+};
+
+window.copyPipStreamUrl = function() {
+  if (currentPipStreamUrl) {
+    window.copyToClipboard(currentPipStreamUrl, 'Stream URL copied to clipboard!');
+  }
+};
 
 // ==========================================
 // Video Player & VLC Hub Modal Lifecycle
@@ -880,6 +1030,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     closePlayerModal();
     closeVideoModal();
+    closePipPlayer();
   }
 });
 

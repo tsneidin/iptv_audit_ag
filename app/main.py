@@ -237,7 +237,8 @@ async def api_audit_stream(payload: AuditRequest):
 @app.get("/api/stream/proxy")
 async def proxy_live_stream(url: str):
     """
-    Proxies live MPEG-TS / HLS stream from IPTV provider with redirect support.
+    Proxies live MPEG-TS stream from IPTV provider with redirect support,
+    enabling instant in-browser playback via mpegts.js without CORS restrictions.
     """
     if not url.startswith(("http://", "https://")):
         return Response(content="Invalid stream URL", status_code=400)
@@ -247,12 +248,19 @@ async def proxy_live_stream(url: str):
         "Accept": "*/*",
     }
 
-    client = httpx.AsyncClient(verify=False, timeout=15.0, follow_redirects=True)
+    client = httpx.AsyncClient(
+        verify=False,
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=6.0, read=30.0, write=6.0, pool=6.0),
+    )
 
     async def stream_generator():
         try:
             async with client.stream("GET", url, headers=req_headers) as response:
-                async for chunk in response.aiter_bytes(chunk_size=65536):
+                if response.status_code != 200:
+                    logger.warning("Stream proxy got HTTP %s for %s", response.status_code, url)
+                    return
+                async for chunk in response.aiter_bytes(chunk_size=32768):
                     yield chunk
         except asyncio.CancelledError:
             pass
@@ -267,7 +275,9 @@ async def proxy_live_stream(url: str):
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Cache-Control": "no-cache, no-store",
+            "Access-Control-Allow-Headers": "*",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

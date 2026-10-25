@@ -441,6 +441,54 @@
     </div>
   </div>
 
+  <!-- Floating Picture-in-Picture In-Browser Live Video Player -->
+  <div id="pip-player-container" class="fixed bottom-6 right-6 z-50 w-80 sm:w-96 bg-unraid-card border border-unraid-border rounded-2xl shadow-2xl overflow-hidden hidden transition-all duration-300">
+    <!-- Header -->
+    <div class="px-4 py-2.5 bg-slate-900/90 border-b border-unraid-border flex items-center justify-between">
+      <div class="flex items-center gap-2 overflow-hidden pr-2">
+        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0"></span>
+        <div class="overflow-hidden">
+          <p id="pip-channel-title" class="text-xs font-semibold text-white truncate">Live Stream</p>
+          <p id="pip-channel-host" class="text-[10px] text-slate-400 font-mono truncate">http://...</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5 flex-shrink-0">
+        <a id="pip-btn-m3u" href="#" download class="p-1 rounded text-slate-400 hover:text-orange-400 text-xs transition" title="Download .m3u for VLC">
+          <i class="fa-solid fa-download"></i>
+        </a>
+        <button onclick="togglePipExpand()" class="p-1 rounded text-slate-400 hover:text-white text-xs transition" title="Expand / Minimize Player">
+          <i id="pip-expand-icon" class="fa-solid fa-up-right-and-down-left-from-center"></i>
+        </button>
+        <button onclick="closePipPlayer()" class="p-1 rounded text-slate-400 hover:text-red-400 text-xs transition" title="Close Player">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Video Element Area -->
+    <div class="relative bg-black aspect-video flex items-center justify-center">
+      <video id="pip-video" class="w-full h-full object-contain" controls playsinline autoplay></video>
+      <div id="pip-loading-overlay" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-2 z-10 transition-opacity">
+        <i class="fa-solid fa-circle-notch fa-spin text-orange-500 text-2xl"></i>
+        <p id="pip-loading-text" class="text-[11px] text-slate-300 font-medium">Connecting to live stream...</p>
+      </div>
+    </div>
+
+    <!-- Quick Footer Bar -->
+    <div class="px-3 py-1.5 bg-slate-900/70 border-t border-unraid-border flex items-center justify-between text-[11px] text-slate-400">
+      <div class="flex items-center gap-2">
+        <span id="pip-status-badge" class="text-emerald-400 text-[10px] font-mono flex items-center gap-1">
+          <i class="fa-solid fa-circle-play text-[9px]"></i> Playing
+        </span>
+        <span class="text-slate-600">&bull;</span>
+        <button onclick="copyPipStreamUrl()" class="hover:text-slate-200 transition flex items-center gap-1 text-[10px]">
+          <i class="fa-regular fa-copy text-[10px]"></i> Copy URL
+        </button>
+      </div>
+      <span class="text-[10px] text-slate-500 font-mono">1-Click Live Preview</span>
+    </div>
+  </div>
+
   <!-- Notification Toast -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm pointer-events-none">
     <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
@@ -451,6 +499,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js?v=1.6.0"></script>
+  <script src="/static/js/app.js?v=1.7.0"></script>
 </body>
 </html>
