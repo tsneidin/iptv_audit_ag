@@ -166,6 +166,22 @@ async def audit_iptv_server(
         latency = int((time.time() - start_time) * 1000)
 
         if resp.status_code != 200:
+            if resp.status_code in (502, 503, 504):
+                reason = f"HTTP {resp.status_code} Gateway Error"
+                if dead_host_cache is not None:
+                    dead_host_cache[server.host] = reason
+                return AuditResult(
+                    host=server.host,
+                    username=server.username,
+                    password=server.password,
+                    is_working=False,
+                    status=reason,
+                    status_badge="offline",
+                    latency_ms=latency,
+                    m3u_url=server.standard_m3u_url,
+                    error_message=f"Server returned HTTP {resp.status_code} - skipping remaining accounts on this host",
+                )
+
             return AuditResult(
                 host=server.host,
                 username=server.username,
@@ -418,15 +434,18 @@ async def audit_iptv_server(
             error_message="Host connection failed or DNS error",
         )
     except (httpx.TimeoutException, asyncio.TimeoutError):
+        reason = "Connection Timeout"
+        if dead_host_cache is not None:
+            dead_host_cache[server.host] = reason
         return AuditResult(
             host=server.host,
             username=server.username,
             password=server.password,
             is_working=False,
-            status="Connection Timeout",
+            status=reason,
             status_badge="offline",
             m3u_url=server.standard_m3u_url,
-            error_message="Connection timed out",
+            error_message="Connection timed out - skipping remaining accounts on this host",
         )
     except Exception as e:
         logger.exception("Audit error for %s", server.host)
