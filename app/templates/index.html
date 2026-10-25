@@ -42,12 +42,16 @@
             IPTV Auditor
             <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20">Unraid</span>
           </h1>
-          <p class="text-xs text-slate-400">Decode, decrypt & batch audit Xtream / M3U servers</p>
+          <p class="text-xs text-slate-400">High-speed async IPTV batch scanner with live controls</p>
         </div>
       </div>
-      <div class="flex items-center space-x-4">
+      <div class="flex items-center space-x-3">
+        <span class="px-2.5 py-1 text-xs font-medium rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1.5">
+          <i class="fa-solid fa-shield-halved"></i>
+          VPN: wg0
+        </span>
         <span id="global-badge" class="px-3 py-1 text-xs font-medium rounded-full bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
           Ready (Port {{ default_port }})
         </span>
       </div>
@@ -62,10 +66,10 @@
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
         <div>
           <h2 class="text-lg font-semibold text-white flex items-center gap-2">
-            <i class="fa-solid fa-key text-orange-500"></i> Paste Encoded Strings or URLs
+            <i class="fa-solid fa-bolt text-orange-500"></i> Fast Batch Input
           </h2>
           <p class="text-xs text-slate-400 mt-1">
-            Accepts Base64/uuencoded strings, paste.sh client-encrypted URLs (<code class="text-orange-300">#key</code>), direct M3U links, or credentials blocks.
+            Paste Base64/uuencoded strings, paste.sh client-encrypted URLs (<code class="text-orange-300">#key</code>), direct M3U links, or key-value blocks.
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -79,40 +83,65 @@
       </div>
 
       <!-- Textarea -->
-      <textarea id="input-strings" rows="5" placeholder="Paste Base64/uuencoded strings (comma or newline separated), or raw URLs here...
-Example: aHR0cHM6Ly9wYXN0ZS5zaC93NFRiUm0wWiNuOTROWXFtYk9PSzN5MnJkcmg3ZWZtZk0= , ..." class="w-full bg-unraid-input border border-unraid-border rounded-xl p-4 text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition resize-y"></textarea>
+      <textarea id="input-strings" rows="5" placeholder="Paste Base64/uuencoded strings, direct URLs, or raw server credentials here..." class="w-full bg-unraid-input border border-unraid-border rounded-xl p-4 text-sm font-mono text-slate-200 placeholder-slate-500 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition resize-y"></textarea>
 
-      <!-- Options & Submit -->
+      <!-- Options & Controls Bar -->
       <div class="mt-4 pt-4 border-t border-unraid-border/70 flex flex-wrap items-center justify-between gap-4">
-        <div class="flex flex-wrap items-center gap-6 text-sm text-slate-300">
+        <div class="flex flex-wrap items-center gap-5 text-sm text-slate-300">
           <label class="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" id="opt-probe-stream" checked class="w-4 h-4 rounded text-orange-500 bg-slate-900 border-slate-700 focus:ring-orange-500">
-            <span>Probe Live Stream <span class="text-xs text-slate-400">(verifies video playback)</span></span>
+            <span class="text-xs sm:text-sm">Probe Stream <span class="text-xs text-slate-400">(verifies video chunk)</span></span>
           </label>
-          <div class="flex items-center gap-2">
-            <label for="opt-concurrency" class="text-xs text-slate-400">Concurrency:</label>
-            <select id="opt-concurrency" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2 py-1 text-slate-200 focus:outline-none focus:border-orange-500">
-              <option value="4">4 Parallel</option>
-              <option value="8" selected>8 Parallel (Optimal)</option>
-              <option value="12">12 Parallel (Fast)</option>
+
+          <div class="flex items-center gap-1.5">
+            <label for="opt-mode" class="text-xs text-slate-400">Mode:</label>
+            <select id="opt-mode" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2.5 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium">
+              <option value="turbo" selected>⚡ Turbo (50x Faster)</option>
+              <option value="deep">🔍 Deep Crawl (Full VOD lists)</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <label for="opt-concurrency" class="text-xs text-slate-400">Workers:</label>
+            <select id="opt-concurrency" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium">
+              <option value="10">10 Parallel</option>
+              <option value="25" selected>25 Parallel (High Speed)</option>
+              <option value="40">40 Parallel (Ultra)</option>
+              <option value="50">50 Parallel (Max Speed)</option>
             </select>
           </div>
         </div>
 
-        <button id="btn-audit" class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-semibold text-sm shadow-lg shadow-orange-600/30 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
-          <i id="btn-icon" class="fa-solid fa-play"></i>
-          <span id="btn-text">Audit Servers</span>
-        </button>
+        <!-- Start / Pause / Stop Buttons -->
+        <div class="flex items-center gap-2">
+          <button id="btn-pause" class="px-4 py-2.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 font-semibold text-xs transition hidden flex items-center gap-1.5">
+            <i id="pause-icon" class="fa-solid fa-pause"></i>
+            <span id="pause-text">Pause</span>
+          </button>
+
+          <button id="btn-stop" class="px-4 py-2.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 font-semibold text-xs transition hidden flex items-center gap-1.5">
+            <i class="fa-solid fa-stop"></i>
+            <span>Stop</span>
+          </button>
+
+          <button id="btn-audit" class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-500 hover:to-amber-500 text-white font-semibold text-sm shadow-lg shadow-orange-600/30 transition flex items-center gap-2">
+            <i id="btn-icon" class="fa-solid fa-play"></i>
+            <span id="btn-text">Audit Servers</span>
+          </button>
+        </div>
       </div>
 
       <!-- Live Progress Bar -->
       <div id="progress-container" class="mt-4 hidden space-y-2">
         <div class="flex justify-between items-center text-xs">
-          <span id="progress-status" class="text-slate-300 font-medium">Initializing...</span>
+          <div class="flex items-center gap-2">
+            <span id="progress-status" class="text-slate-300 font-medium">Initializing...</span>
+            <span id="speed-meter" class="text-[11px] text-slate-400 font-mono"></span>
+          </div>
           <span id="progress-count" class="text-orange-400 font-mono font-semibold">0%</span>
         </div>
-        <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
-          <div id="progress-bar" class="bg-gradient-to-r from-orange-500 to-amber-400 h-2 rounded-full transition-all duration-300 w-0"></div>
+        <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+          <div id="progress-bar" class="bg-gradient-to-r from-orange-500 via-amber-400 to-emerald-400 h-2.5 rounded-full transition-all duration-200 w-0"></div>
         </div>
       </div>
     </div>
@@ -206,7 +235,6 @@ Example: aHR0cHM6Ly9wYXN0ZS5zaC93NFRiUm0wWiNuOTROWXFtYk9PSzN5MnJkcmg3ZWZtZk0= , 
             </tr>
           </thead>
           <tbody id="results-tbody" class="divide-y divide-unraid-border/60 text-slate-300">
-            <!-- Dynamic rows will be inserted here -->
           </tbody>
         </table>
       </div>
@@ -232,7 +260,7 @@ Example: aHR0cHM6Ly9wYXN0ZS5zaC93NFRiUm0wWiNuOTROWXFtYk9PSzN5MnJkcmg3ZWZtZk0= , 
   </div>
 
   <footer class="border-t border-unraid-border bg-unraid-dark/80 text-center py-4 text-xs text-slate-500">
-    IPTV Auditor for Unraid &bull; Built with FastAPI & Modern Async Architecture
+    IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
   <script src="/static/js/app.js"></script>

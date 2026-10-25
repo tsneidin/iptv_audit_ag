@@ -12,25 +12,10 @@ from app.parser import IPTVServer
 
 logger = logging.getLogger(__name__)
 
-ADULT_KEYWORDS = [
-    "xxx",
-    "adult",
-    "+18",
-    "18+",
-    "for adult",
-    "erotic",
-    "porn",
-    "playboy",
-    "hustler",
-    "redlight",
-    "red light",
-    "brazzers",
-    "dorcel",
-    "penthouse",
-    "vivid",
-    "sensual",
-    "babes",
-]
+# Fast pre-compiled regex for adult keywords
+ADULT_REGEX = re.compile(
+    r"(?i)(?:\b(xxx|adult|porn|erotic|playboy|hustler|redlight|red\s*light|brazzers|dorcel|penthouse|vivid|sensual|babes)\b|\b18\+|\+18|for\s*adult)"
+)
 
 
 class AuditResult(BaseModel):
@@ -66,7 +51,6 @@ def format_expiration(exp_val: Any) -> tuple[Optional[str], Optional[str]]:
             ts = int(exp_val)
             dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         else:
-            # Try ISO or standard datetime strings
             dt = datetime.fromisoformat(str(exp_val).replace("Z", "+00:00"))
 
         date_str = dt.strftime("%Y-%m-%d")
@@ -93,8 +77,9 @@ def format_expiration(exp_val: Any) -> tuple[Optional[str], Optional[str]]:
 
 
 def check_adult(name: str) -> bool:
-    nl = name.lower()
-    return any(w in nl for w in ADULT_KEYWORDS)
+    if not name:
+        return False
+    return bool(ADULT_REGEX.search(name))
 
 
 async def test_live_stream_probe(
@@ -104,10 +89,7 @@ async def test_live_stream_probe(
     active_cons: int,
     max_cons: int,
 ) -> tuple[str, str]:
-    """
-    Attempts to read the first few kilobytes of a live channel stream
-    to verify playback.
-    """
+    """Attempts to read the first few bytes of a live channel stream to verify playback."""
     if not stream_id:
         return "No Stream ID", "gray"
 
@@ -117,13 +99,13 @@ async def test_live_stream_probe(
             "GET",
             stream_url,
             headers={"User-Agent": config.USER_AGENT},
-            timeout=config.PROBE_TIMEOUT,
+            timeout=httpx.Timeout(connect=config.CONNECT_TIMEOUT, read=config.PROBE_TIMEOUT, write=2.0, pool=2.0),
         ) as resp:
             if resp.status_code == 200:
                 bytes_read = 0
                 async for chunk in resp.aiter_bytes():
                     bytes_read += len(chunk)
-                    if bytes_read >= 4096:
+                    if bytes_read >= 2048:
                         break
                 if bytes_read > 0:
                     return f"Playable ({round(bytes_read / 1024, 1)} KB read)", "green"
@@ -136,7 +118,7 @@ async def test_live_stream_probe(
                 return "ISP / Panel Blocked (511)", "red"
             else:
                 return f"HTTP {resp.status_code}", "red"
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, asyncio.TimeoutError):
         return "Stream Timeout", "yellow"
     except Exception as e:
         err = str(e)
@@ -149,19 +131,36 @@ async def audit_iptv_server(
     server: IPTVServer,
     client: httpx.AsyncClient,
     probe_stream: bool = True,
+    audit_mode: str = "turbo",
+    dead_host_cache: Optional[Dict[str, str]] = None,
 ) -> AuditResult:
     """
-    Tests an individual IPTV server credentials against Xtream Codes API
-    and live stream endpoint.
+    High-performance tester against Xtream Codes API.
+    Uses dead-host caching to avoid timeout lag on dead domains.
     """
+    # Check if host is already known to be dead/offline
+    if dead_host_cache is not None and server.host in dead_host_cache:
+        cached_reason = dead_host_cache[server.host]
+        return AuditResult(
+            host=server.host,
+            username=server.username,
+            password=server.password,
+            is_working=False,
+            status=cached_reason,
+            status_badge="offline",
+            m3u_url=server.standard_m3u_url,
+            error_message=f"Host previously failed ({cached_reason})",
+        )
+
     start_time = time.time()
     api_url = f"{server.host}/player_api.php?username={server.username}&password={server.password}"
+    req_timeout = httpx.Timeout(connect=config.CONNECT_TIMEOUT, read=config.READ_TIMEOUT, write=2.0, pool=3.0)
 
     try:
         resp = await client.get(
             api_url,
             headers={"User-Agent": config.USER_AGENT},
-            timeout=config.REQUEST_TIMEOUT,
+            timeout=req_timeout,
         )
         latency = int((time.time() - start_time) * 1000)
 
@@ -207,7 +206,7 @@ async def audit_iptv_server(
                 error_message="Missing user_info in response",
             )
 
-        # Auth check
+        # Auth & account status check
         auth = user_info.get("auth")
         raw_status = str(user_info.get("status", "")).strip().capitalize()
         if auth == 0 or raw_status.lower() in ("disabled", "banned", "deleted"):
@@ -226,15 +225,11 @@ async def audit_iptv_server(
         # Expiration
         exp_date_raw = user_info.get("exp_date")
         exp_str, exp_countdown = format_expiration(exp_date_raw)
-
-        is_expired = False
-        if exp_countdown and "Expired" in exp_countdown:
-            is_expired = True
+        is_expired = bool(exp_countdown and "Expired" in exp_countdown)
 
         max_cons = int(user_info.get("max_connections") or 1)
         active_cons = int(user_info.get("active_cons") or 0)
 
-        # Query categories & streams for accurate counts & adult detection
         live_count = 0
         vod_count = 0
         series_count = 0
@@ -242,13 +237,12 @@ async def audit_iptv_server(
         adult_matches: List[str] = []
         candidate_stream_id = None
 
-        # Helper to fetch endpoint
         async def fetch_endpoint(action: str):
             try:
                 r = await client.get(
                     f"{api_url}&action={action}",
                     headers={"User-Agent": config.USER_AGENT},
-                    timeout=config.REQUEST_TIMEOUT,
+                    timeout=req_timeout,
                 )
                 if r.status_code == 200:
                     return r.json()
@@ -256,56 +250,95 @@ async def audit_iptv_server(
                 pass
             return None
 
-        # Fetch in parallel
-        live_res, vod_res, series_res, live_cats_res = await asyncio.gather(
-            fetch_endpoint("get_live_streams"),
-            fetch_endpoint("get_vod_streams"),
-            fetch_endpoint("get_series"),
-            fetch_endpoint("get_live_categories"),
-        )
+        # TURBO MODE: Query categories + live streams for probe candidate
+        # Skips multi-megabyte VOD stream array downloads for 10x - 50x speedup
+        if audit_mode == "turbo":
+            live_cats_res, vod_cats_res, series_cats_res, live_sample_res = await asyncio.gather(
+                fetch_endpoint("get_live_categories"),
+                fetch_endpoint("get_vod_categories"),
+                fetch_endpoint("get_series_categories"),
+                fetch_endpoint("get_live_streams") if probe_stream else asyncio.sleep(0),
+            )
 
-        # Process Live Streams
-        if isinstance(live_res, list):
-            live_count = len(live_res)
-            for item in live_res:
-                name = item.get("name", "")
-                if not candidate_stream_id and item.get("stream_id") and not name.startswith(("-=", "###", "===")):
-                    candidate_stream_id = item.get("stream_id")
-                if check_adult(name):
-                    adult_detected = True
-                    if len(adult_matches) < 3:
-                        adult_matches.append(name)
-        elif isinstance(live_cats_res, list):
-            live_count = len(live_cats_res)  # fallback estimate
+            if isinstance(live_cats_res, list):
+                live_count = len(live_cats_res)
+                for cat in live_cats_res:
+                    name = cat.get("category_name", "")
+                    if check_adult(name):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(name)
 
-        # Process VOD Movies
-        if isinstance(vod_res, list):
-            vod_count = len(vod_res)
-            for item in vod_res:
-                name = item.get("name", "")
-                if check_adult(name):
-                    adult_detected = True
-                    if len(adult_matches) < 3:
-                        adult_matches.append(name)
+            if isinstance(vod_cats_res, list):
+                vod_count = len(vod_cats_res)
+                for cat in vod_cats_res:
+                    name = cat.get("category_name", "")
+                    if check_adult(name):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(name)
 
-        # Process Series
-        if isinstance(series_res, list):
-            series_count = len(series_res)
+            if isinstance(series_cats_res, list):
+                series_count = len(series_cats_res)
 
-        # Check Live Categories for adult tags
-        if isinstance(live_cats_res, list):
-            for cat in live_cats_res:
-                cat_name = cat.get("category_name", "")
-                if check_adult(cat_name):
-                    adult_detected = True
-                    if len(adult_matches) < 3:
-                        adult_matches.append(cat_name)
+            if isinstance(live_sample_res, list):
+                live_count = len(live_sample_res)  # Exact live count if available
+                for item in live_sample_res:
+                    sid = item.get("stream_id")
+                    sname = item.get("name", "")
+                    if not candidate_stream_id and sid and not sname.startswith(("-=", "###", "===")):
+                        candidate_stream_id = sid
+                    if check_adult(sname):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(sname)
+                    if candidate_stream_id and adult_detected:
+                        break
+
+        else:
+            # DEEP CRAWL MODE: Full catalog download
+            live_res, vod_res, series_res, live_cats_res = await asyncio.gather(
+                fetch_endpoint("get_live_streams"),
+                fetch_endpoint("get_vod_streams"),
+                fetch_endpoint("get_series"),
+                fetch_endpoint("get_live_categories"),
+            )
+
+            if isinstance(live_res, list):
+                live_count = len(live_res)
+                for item in live_res:
+                    name = item.get("name", "")
+                    if not candidate_stream_id and item.get("stream_id") and not name.startswith(("-=", "###", "===")):
+                        candidate_stream_id = item.get("stream_id")
+                    if check_adult(name):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(name)
+
+            if isinstance(vod_res, list):
+                vod_count = len(vod_res)
+                for item in vod_res:
+                    if check_adult(item.get("name", "")):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(item.get("name", ""))
+
+            if isinstance(series_res, list):
+                series_count = len(series_res)
+
+            if isinstance(live_cats_res, list):
+                for cat in live_cats_res:
+                    cat_name = cat.get("category_name", "")
+                    if check_adult(cat_name):
+                        adult_detected = True
+                        if len(adult_matches) < 3:
+                            adult_matches.append(cat_name)
 
         adult_details = "None"
         if adult_detected:
             adult_details = f"Yes ({', '.join(adult_matches[:2])})" if adult_matches else "Yes"
 
-        # Stream Probing (if enabled and server has live channels)
+        # Stream Probing
         stream_probe_status = "Skipped"
         stream_badge = "gray"
         if probe_stream and candidate_stream_id:
@@ -342,18 +375,21 @@ async def audit_iptv_server(
             m3u_url=server.standard_m3u_url,
         )
 
-    except httpx.ConnectError:
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        reason = "Offline / Host Unreachable"
+        if dead_host_cache is not None:
+            dead_host_cache[server.host] = reason
         return AuditResult(
             host=server.host,
             username=server.username,
             password=server.password,
             is_working=False,
-            status="Offline / Unreachable",
+            status=reason,
             status_badge="offline",
             m3u_url=server.standard_m3u_url,
-            error_message="Host connection failed or domain does not exist",
+            error_message="Host connection failed or DNS error",
         )
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, asyncio.TimeoutError):
         return AuditResult(
             host=server.host,
             username=server.username,

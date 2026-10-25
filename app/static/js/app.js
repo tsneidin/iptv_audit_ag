@@ -10,21 +10,32 @@ let allResults = [];
 let currentFilter = 'all';
 let searchQuery = '';
 let isAuditing = false;
+let isPaused = false;
+let currentSessionId = null;
+let abortController = null;
+let auditStartTime = 0;
 
 // DOM Elements
 const inputStrings = document.getElementById('input-strings');
 const btnSample = document.getElementById('btn-sample');
 const btnClear = document.getElementById('btn-clear');
 const btnAudit = document.getElementById('btn-audit');
+const btnPause = document.getElementById('btn-pause');
+const btnStop = document.getElementById('btn-stop');
+const pauseIcon = document.getElementById('pause-icon');
+const pauseText = document.getElementById('pause-text');
 const btnIcon = document.getElementById('btn-icon');
 const btnText = document.getElementById('btn-text');
+
 const optProbe = document.getElementById('opt-probe-stream');
+const optMode = document.getElementById('opt-mode');
 const optConcurrency = document.getElementById('opt-concurrency');
 
 const progressContainer = document.getElementById('progress-container');
 const progressStatus = document.getElementById('progress-status');
 const progressCount = document.getElementById('progress-count');
 const progressBar = document.getElementById('progress-bar');
+const speedMeter = document.getElementById('speed-meter');
 
 const statsSection = document.getElementById('stats-section');
 const statTotal = document.getElementById('stat-total');
@@ -74,24 +85,86 @@ filterBtns.forEach(btn => {
   });
 });
 
-// Audit trigger
-btnAudit.addEventListener('click', async () => {
+// Audit Start / Trigger
+btnAudit.addEventListener('click', () => {
   const text = inputStrings.value.trim();
   if (!text) {
     showToast('Please paste at least one string or URL first.', 'error');
     return;
   }
   if (isAuditing) return;
-
   startAudit(text);
+});
+
+// Pause / Resume Button
+btnPause.addEventListener('click', async () => {
+  if (!currentSessionId) return;
+
+  if (!isPaused) {
+    // Request Pause
+    try {
+      await fetch(`/api/audit/pause/${currentSessionId}`, { method: 'POST' });
+      isPaused = true;
+      pauseIcon.className = 'fa-solid fa-play';
+      pauseText.textContent = 'Resume';
+      btnPause.classList.remove('text-amber-300', 'bg-amber-600/20', 'border-amber-500/30');
+      btnPause.classList.add('text-emerald-300', 'bg-emerald-600/20', 'border-emerald-500/30');
+      progressStatus.textContent = 'Audit Paused';
+      globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span> Paused`;
+      showToast('Audit paused.');
+    } catch (e) {
+      console.error(e);
+    }
+  } else {
+    // Request Resume
+    try {
+      await fetch(`/api/audit/resume/${currentSessionId}`, { method: 'POST' });
+      isPaused = false;
+      pauseIcon.className = 'fa-solid fa-pause';
+      pauseText.textContent = 'Pause';
+      btnPause.classList.remove('text-emerald-300', 'bg-emerald-600/20', 'border-emerald-500/30');
+      btnPause.classList.add('text-amber-300', 'bg-amber-600/20', 'border-amber-500/30');
+      progressStatus.textContent = 'Resuming audit...';
+      globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span> Auditing...`;
+      showToast('Audit resumed.');
+    } catch (e) {
+      console.error(e);
+    }
+  }
+});
+
+// Stop Button
+btnStop.addEventListener('click', async () => {
+  if (!currentSessionId && !isAuditing) return;
+
+  try {
+    if (currentSessionId) {
+      await fetch(`/api/audit/stop/${currentSessionId}`, { method: 'POST' });
+    }
+  } catch (e) {
+    console.error(e);
+  }
+
+  if (abortController) {
+    abortController.abort();
+  }
+
+  isAuditing = false;
+  isPaused = false;
+  setControlButtonsState(false);
+  progressStatus.textContent = `Stopped. Retained ${allResults.length} audited servers.`;
+  speedMeter.textContent = '';
+  showToast('Audit stopped by user.', 'error');
 });
 
 async function startAudit(text) {
   isAuditing = true;
-  setAuditButtonState(true);
+  isPaused = false;
+  setControlButtonsState(true);
   allResults = [];
   resultsTbody.innerHTML = '';
-  
+  auditStartTime = Date.now();
+
   emptyState.classList.add('hidden');
   progressContainer.classList.remove('hidden');
   statsSection.classList.remove('hidden');
@@ -99,18 +172,23 @@ async function startAudit(text) {
   resultsCard.classList.remove('hidden');
 
   updateStats();
-  progressBar.style.width = '5%';
+  progressBar.style.width = '3%';
   progressStatus.textContent = 'Contacting server...';
   progressCount.textContent = '0%';
+  speedMeter.textContent = '';
+
+  abortController = new AbortController();
 
   try {
     const response = await fetch('/api/audit/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: abortController.signal,
       body: JSON.stringify({
         input_text: text,
         probe_stream: optProbe.checked,
-        concurrency: parseInt(optConcurrency.value) || 8
+        audit_mode: optMode.value,
+        concurrency: parseInt(optConcurrency.value) || 25
       })
     });
 
@@ -128,7 +206,7 @@ async function startAudit(text) {
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n\n');
-      buffer = lines.pop(); // keep last incomplete chunk
+      buffer = lines.pop();
 
       for (const block of lines) {
         if (!block.trim().startsWith('data:')) continue;
@@ -142,23 +220,31 @@ async function startAudit(text) {
       }
     }
   } catch (err) {
+    if (err.name === 'AbortError') {
+      // Stopped gracefully
+      return;
+    }
     showToast(`Audit failed: ${err.message}`, 'error');
     progressStatus.textContent = `Error: ${err.message}`;
   } finally {
     isAuditing = false;
-    setAuditButtonState(false);
+    isPaused = false;
+    currentSessionId = null;
+    setControlButtonsState(false);
   }
 }
 
 function handleSSEEvent(event) {
-  if (event.type === 'status' || event.type === 'warning') {
+  if (event.type === 'session_init') {
+    currentSessionId = event.session_id;
+  } else if (event.type === 'status' || event.type === 'warning') {
     progressStatus.textContent = event.message;
   } else if (event.type === 'extracted_urls') {
     progressStatus.textContent = event.message;
-    progressBar.style.width = '15%';
+    progressBar.style.width = '10%';
   } else if (event.type === 'parsed_servers') {
     progressStatus.textContent = event.message;
-    progressBar.style.width = '25%';
+    progressBar.style.width = '15%';
   } else if (event.type === 'server_result') {
     const data = event.data;
     allResults.push(data);
@@ -166,33 +252,51 @@ function handleSSEEvent(event) {
 
     if (data.total && data.completed) {
       const pct = Math.round((data.completed / data.total) * 100);
-      progressBar.style.width = `${Math.max(25, pct)}%`;
+      progressBar.style.width = `${Math.max(15, pct)}%`;
       progressCount.textContent = `${pct}%`;
       progressStatus.textContent = `Audited ${data.completed} of ${data.total} servers...`;
+
+      // Live speed meter
+      const elapsedSec = (Date.now() - auditStartTime) / 1000;
+      if (elapsedSec > 1) {
+        const rate = (data.completed / elapsedSec).toFixed(1);
+        speedMeter.textContent = `(${rate} servers/sec)`;
+      }
     }
 
     renderTable();
   } else if (event.type === 'audit_complete') {
     progressBar.style.width = '100%';
     progressCount.textContent = '100%';
-    progressStatus.textContent = `Finished! ${allResults.length} servers audited.`;
-    showToast('Audit complete!', 'success');
+    const elapsedSec = ((Date.now() - auditStartTime) / 1000).toFixed(1);
+    progressStatus.textContent = `Completed ${allResults.length} servers in ${elapsedSec}s!`;
+    speedMeter.textContent = '';
+    showToast(`Audit complete in ${elapsedSec}s!`, 'success');
+  } else if (event.type === 'audit_stopped') {
+    progressStatus.textContent = event.message;
+    speedMeter.textContent = '';
   } else if (event.type === 'error') {
     progressStatus.textContent = event.message;
     showToast(event.message, 'error');
   }
 }
 
-function setAuditButtonState(active) {
+function setControlButtonsState(active) {
   if (active) {
     btnAudit.disabled = true;
+    btnAudit.classList.add('opacity-50', 'cursor-not-allowed');
     btnIcon.className = 'fa-solid fa-spinner fa-spin';
     btnText.textContent = 'Auditing...';
+    btnPause.classList.remove('hidden');
+    btnStop.classList.remove('hidden');
     globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-orange-400 animate-ping"></span> Auditing...`;
   } else {
     btnAudit.disabled = false;
+    btnAudit.classList.remove('opacity-50', 'cursor-not-allowed');
     btnIcon.className = 'fa-solid fa-play';
     btnText.textContent = 'Audit Servers';
+    btnPause.classList.add('hidden');
+    btnStop.classList.add('hidden');
     globalBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Ready`;
   }
 }
@@ -206,13 +310,11 @@ function updateStats() {
 
 function renderTable() {
   let filtered = allResults.filter(r => {
-    // Search query
     if (searchQuery) {
       const matchHost = (r.host || '').toLowerCase().includes(searchQuery);
       const matchUser = (r.username || '').toLowerCase().includes(searchQuery);
       if (!matchHost && !matchUser) return false;
     }
-    // Filter tags
     if (currentFilter === 'active') return r.is_working;
     if (currentFilter === 'adult') return r.has_adult;
     if (currentFilter === 'stream_ok') return (r.stream_probe || '').toLowerCase().includes('playable');
@@ -231,7 +333,6 @@ function renderTable() {
   }
 
   resultsTbody.innerHTML = filtered.map(r => {
-    // Status Badge
     let statusClass = 'bg-slate-800 text-slate-400 border-slate-700';
     let statusIcon = 'fa-circle-question';
     if (r.status_badge === 'active') {
@@ -245,18 +346,15 @@ function renderTable() {
       statusIcon = 'fa-circle-xmark';
     }
 
-    // Stream Probe Badge
     let streamClass = 'text-slate-400';
     if (r.stream_probe_badge === 'green') streamClass = 'text-emerald-400 font-medium';
     else if (r.stream_probe_badge === 'yellow') streamClass = 'text-amber-400';
     else if (r.stream_probe_badge === 'red') streamClass = 'text-red-400';
 
-    // Adult Badge
     const adultBadge = r.has_adult 
       ? `<span class="px-2 py-0.5 rounded-full bg-pink-500/10 text-pink-400 border border-pink-500/20 font-medium" title="${escapeHtml(r.adult_details)}"><i class="fa-solid fa-venus-mars mr-1"></i>Yes</span>`
       : `<span class="text-slate-500">None</span>`;
 
-    // Latency
     const latencyTag = r.latency_ms > 0 ? `<span class="text-[10px] text-slate-500 font-mono ml-1">(${r.latency_ms}ms)</span>` : '';
 
     return `
@@ -326,7 +424,6 @@ function renderTable() {
   }).join('');
 }
 
-// Copy single M3U or text
 window.copyToClipboard = function(text, msg = 'Copied to clipboard!') {
   navigator.clipboard.writeText(text).then(() => {
     showToast(msg);
@@ -335,13 +432,11 @@ window.copyToClipboard = function(text, msg = 'Copied to clipboard!') {
   });
 };
 
-// Copy Xtream format
 window.copyXtream = function(host, user, pass) {
   const jsonStr = `Server: ${host}\nUsername: ${user}\nPassword: ${pass}`;
   window.copyToClipboard(jsonStr, 'Xtream credentials copied!');
 };
 
-// Copy all working M3Us
 btnCopyWorking.addEventListener('click', () => {
   const working = allResults.filter(r => r.is_working).map(r => r.m3u_url);
   if (working.length === 0) {
@@ -354,7 +449,6 @@ btnCopyWorking.addEventListener('click', () => {
   });
 });
 
-// Export CSV
 btnExportCsv.addEventListener('click', async () => {
   if (allResults.length === 0) {
     showToast('No results to export.', 'error');
@@ -381,7 +475,6 @@ btnExportCsv.addEventListener('click', async () => {
   }
 });
 
-// Toast system
 function showToast(message, type = 'success') {
   const toast = document.getElementById('toast');
   const toastMessage = document.getElementById('toast-message');

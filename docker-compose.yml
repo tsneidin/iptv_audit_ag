@@ -6,10 +6,16 @@ services:
     restart: unless-stopped
     ports:
       - "${PORT:-8180}:8180"
+    networks:
+      - wg0
     environment:
       - PORT=8180
-      - MAX_CONCURRENT_CHECKS=8
-      - REQUEST_TIMEOUT=6.0
+      - MAX_CONCURRENT_CHECKS=25
+      - REQUEST_TIMEOUT=4.0
       - PROBE_STREAMS=true
-      - PROBE_TIMEOUT=4.0
+      - PROBE_TIMEOUT=2.5
       - USER_AGENT=IPTVSmartersPlayer
+
+networks:
+  wg0:
+    external: true
