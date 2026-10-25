@@ -1,9 +1,7 @@
 services:
   iptv-audit:
     build:
-      context: .
-      dockerfile: Dockerfile
-    image: iptv-audit:latest
+      context: https://github.com/tsneidin/iptv_audit_ag.git#main
     container_name: iptv-audit
     restart: unless-stopped
     ports:

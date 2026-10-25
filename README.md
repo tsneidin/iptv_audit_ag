@@ -43,7 +43,6 @@ services:
   iptv-audit:
     build:
       context: https://github.com/tsneidin/iptv_audit_ag.git#main
-    image: iptv-audit:latest
     container_name: iptv-audit
     restart: unless-stopped
     ports:
@@ -56,6 +55,13 @@ services:
       - PROBE_TIMEOUT=4.0
       - USER_AGENT=IPTVSmartersPlayer
 ```
+
+> **Note on Updates**: Because this stack builds from source rather than pulling from Docker Hub, do not click the "Update" (Pull) button in Compose Manager. Instead, click **Compose Down** and then **Compose Up** to build and start the latest version.
+>
+> Alternatively, you can use the pre-built GitHub Container Registry image if you prefer one-click updates:
+> ```yaml
+> image: ghcr.io/tsneidin/iptv_audit_ag:latest
+> ```
 
 *(Alternatively, if you cloned this repo directly onto your Unraid server into `/boot/config/plugins/dockerMan/templates-user/projects/iptv-audit` or `/mnt/user/appdata/iptv-audit`, simply run `docker compose up -d`)*.
 
