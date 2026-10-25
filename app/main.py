@@ -234,16 +234,65 @@ async def api_audit_stream(payload: AuditRequest):
     )
 
 
+@app.get("/api/stream/proxy")
+async def proxy_live_stream(url: str):
+    """
+    Proxies live MPEG-TS / HLS stream from IPTV provider through the Unraid container
+    (routed over WireGuard wg0), setting proper CORS and VLC User-Agent headers.
+    """
+    if not url.startswith(("http://", "https://")):
+        return Response(content="Invalid stream URL", status_code=400)
+
+    req_headers = {
+        "User-Agent": "VLC/3.0.18 LibVLC/3.0.18",
+        "Accept": "*/*",
+    }
+
+    client = httpx.AsyncClient(verify=False, timeout=20.0)
+
+    async def stream_generator():
+        try:
+            async with client.stream("GET", url, headers=req_headers) as response:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    yield chunk
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug("Stream proxy closed: %s", e)
+        finally:
+            await client.aclose()
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="video/mp2t",
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Cache-Control": "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/play/m3u")
-async def download_single_stream_m3u(url: str, title: str = "Live Stream"):
+async def download_single_stream_m3u(request: Request, url: str, title: str = "Live Stream", proxy: bool = False):
     """
     Returns a small single-channel .m3u playlist file targeting this exact stream.
     When opened, VLC or system media players immediately start playing the channel.
+    If proxy=True, the stream routes through the container's WireGuard VPN.
     """
     clean_title = title.strip() or "Live Stream"
-    content = f"#EXTM3U\n#EXTINF:-1,{clean_title}\n{url}\n"
+    stream_target = url
+    if proxy:
+        base_url = str(request.base_url).rstrip("/")
+        from urllib.parse import quote
+        stream_target = f"{base_url}/api/stream/proxy?url={quote(url, safe='')}"
+
+    content = f"#EXTM3U\n#EXTINF:-1,{clean_title}\n{stream_target}\n"
     import re
     safe_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', clean_title)[:40] or "channel"
+    if proxy:
+        safe_filename += "_vpn"
     return Response(
         content=content,
         media_type="audio/x-mpegurl",

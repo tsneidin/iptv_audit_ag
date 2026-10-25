@@ -63,5 +63,26 @@ class TestAuditor(unittest.TestCase):
         self.assertEqual(res.status, "Connection Timeout")
         self.assertIn("Host previously failed", res.error_message)
 
+    def test_m3u_endpoint(self):
+        from starlette.testclient import TestClient
+        from app.main import app
+        client = TestClient(app)
+
+        # 1. Direct stream m3u
+        resp = client.get("/api/play/m3u?url=http://example.com/live/u/p/1.ts&title=BBC%20News")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("#EXTINF:-1,BBC News", resp.text)
+        self.assertIn("http://example.com/live/u/p/1.ts", resp.text)
+        self.assertEqual(resp.headers["content-type"], "audio/x-mpegurl; charset=utf-8")
+
+        # 2. Proxy stream m3u (for VPN routing)
+        resp_proxy = client.get("/api/play/m3u?url=http://example.com/live/u/p/1.ts&title=BBC%20News&proxy=true")
+        self.assertEqual(resp_proxy.status_code, 200)
+        self.assertIn("/api/stream/proxy?url=", resp_proxy.text)
+
+        # 3. Invalid stream proxy check
+        resp_invalid = client.get("/api/stream/proxy?url=ftp://bad-url")
+        self.assertEqual(resp_invalid.status_code, 400)
+
 if __name__ == "__main__":
     unittest.main()

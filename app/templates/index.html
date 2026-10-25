@@ -25,8 +25,10 @@
       }
     }
   </script>
-  <link rel="stylesheet" href="/static/css/styles.css?v=1.4.0">
+  <link rel="stylesheet" href="/static/css/styles.css?v=1.5.0">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- HTML5 MPEG-TS Live Stream Player -->
+  <script src="https://cdn.jsdelivr.net/npm/mpegts.js@1.8.2/dist/mpegts.js"></script>
 </head>
 <body class="bg-[#0f1418] text-slate-100 min-h-screen flex flex-col font-sans selection:bg-orange-600 selection:text-white">
 
@@ -278,12 +280,12 @@
         </button>
       </div>
 
-      <!-- Quick Play in VLC Section -->
+      <!-- Quick Play / VLC Section -->
       <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 space-y-3">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <i class="fa-solid fa-play text-orange-500 text-sm"></i>
-            <span class="text-xs font-semibold text-slate-200">Quick Test Stream (VLC)</span>
+            <span class="text-xs font-semibold text-slate-200">Test Channel Playback</span>
           </div>
           <span id="modal-test-channel-badge" class="text-[11px] px-2.5 py-0.5 rounded-full bg-orange-500/10 text-orange-400 border border-orange-500/20 font-medium">
             BBC News
@@ -291,15 +293,15 @@
         </div>
         
         <p class="text-xs text-slate-400">
-          Verify live video playback instantly in VLC on Mac, Windows, or Linux.
+          Verify live video playback right in your browser, or download the .m3u launcher for VLC.
         </p>
 
-        <div class="flex items-center gap-2 pt-1">
-          <button id="modal-btn-vlc-uri" class="flex-1 py-2 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-orange-600/20">
-            <i class="fa-solid fa-play text-[11px]"></i> Launch in VLC (URI)
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+          <button id="modal-btn-web-player" type="button" class="py-2 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-semibold text-xs flex items-center justify-center gap-2 transition shadow-md shadow-orange-600/20">
+            <i class="fa-solid fa-circle-play text-[11px]"></i> Watch in Web Player
           </button>
-          <a id="modal-btn-vlc-m3u" href="#" download class="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-2 transition" title="Download 1-channel .m3u launcher file">
-            <i class="fa-solid fa-download text-[11px]"></i> .m3u Launcher
+          <a id="modal-btn-vlc-m3u" href="#" download class="py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center justify-center gap-2 transition" title="Download 1-channel .m3u launcher file for VLC">
+            <i class="fa-solid fa-download text-[11px]"></i> Download .m3u for VLC
           </a>
         </div>
       </div>
@@ -366,6 +368,85 @@
     </div>
   </div>
 
+  <!-- Live Stream Video Player & VLC Hub Modal -->
+  <div id="video-modal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md hidden p-4">
+    <div class="bg-unraid-card border border-unraid-border rounded-2xl max-w-2xl w-full p-5 shadow-2xl relative space-y-4">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-unraid-border">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-orange-600/20 text-orange-400 border border-orange-500/30 flex items-center justify-center text-lg">
+            <i class="fa-solid fa-play"></i>
+          </div>
+          <div>
+            <h3 id="video-modal-title" class="text-base font-semibold text-white truncate max-w-md">
+              Live Stream Preview
+            </h3>
+            <p id="video-modal-subtitle" class="text-xs text-slate-400 font-mono truncate max-w-sm">http://...</p>
+          </div>
+        </div>
+        <button onclick="closeVideoModal()" class="text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition">
+          <i class="fa-solid fa-xmark text-base"></i>
+        </button>
+      </div>
+
+      <!-- In-Browser Video Player Screen -->
+      <div class="relative bg-black rounded-xl overflow-hidden aspect-video border border-slate-800 flex items-center justify-center">
+        <!-- Live Video Element -->
+        <video id="live-video" class="w-full h-full object-contain" controls playsinline></video>
+
+        <!-- Loading / Status Overlay -->
+        <div id="video-loading-overlay" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3 z-10 transition-opacity">
+          <i class="fa-solid fa-circle-notch fa-spin text-orange-500 text-3xl"></i>
+          <p id="video-loading-text" class="text-xs text-slate-300 font-medium">Connecting to stream via wg0 VPN...</p>
+        </div>
+      </div>
+
+      <!-- VLC & External Playback Hub -->
+      <div class="bg-slate-900/70 border border-slate-800 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+            <i class="fa-solid fa-traffic-cone text-orange-500"></i>
+            Open in VLC Media Player
+          </span>
+          <span class="text-[10px] text-slate-400">Desktop / Mobile</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <!-- Direct .m3u -->
+          <a id="video-btn-m3u-direct" href="#" download class="py-2.5 px-3 rounded-lg bg-orange-600 hover:bg-orange-500 text-white font-medium flex items-center justify-center gap-2 transition shadow-sm">
+            <i class="fa-solid fa-download text-xs"></i>
+            <span>Download .m3u for VLC</span>
+          </a>
+
+          <!-- VPN-routed .m3u -->
+          <a id="video-btn-m3u-vpn" href="#" download class="py-2.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium flex items-center justify-center gap-2 transition shadow-sm" title="Streams through Unraid wg0 VPN connection">
+            <i class="fa-solid fa-shield-halved text-xs"></i>
+            <span>Download .m3u (wg0 VPN)</span>
+          </a>
+        </div>
+
+        <div class="space-y-1.5 pt-1">
+          <label class="text-[11px] text-slate-400 block">Stream URL (Paste into VLC: <kbd class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Cmd+N</kbd> or <kbd class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">Ctrl+N</kbd>)</label>
+          <div class="flex items-center rounded-lg bg-unraid-input border border-unraid-border overflow-hidden">
+            <input id="video-stream-url-field" readonly class="w-full bg-transparent px-3 py-1.5 text-xs text-slate-300 font-mono focus:outline-none truncate">
+            <button onclick="copyFieldValue('video-stream-url-field', this)" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 whitespace-nowrap text-xs">
+              <i class="fa-regular fa-copy"></i> Copy
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-400">
+          <button id="video-btn-copy-cli" type="button" class="text-orange-400 hover:text-orange-300 flex items-center gap-1 transition">
+            <i class="fa-solid fa-terminal text-[10px]"></i> Copy Mac/Linux Terminal Command
+          </button>
+          <span class="text-slate-500 text-[10px]">Double-clicking the downloaded .m3u file launches VLC</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Notification Toast -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm pointer-events-none">
     <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400"></i>
@@ -376,6 +457,6 @@
     IPTV Auditor for Unraid &bull; Routed via WireGuard wg0 &bull; High-Speed Concurrency Engine
   </footer>
 
-  <script src="/static/js/app.js?v=1.4.0"></script>
+  <script src="/static/js/app.js?v=1.5.0"></script>
 </body>
 </html>

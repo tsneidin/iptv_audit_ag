@@ -446,7 +446,7 @@ function renderTable() {
         <td class="py-3 px-4 text-right whitespace-nowrap">
           <div class="inline-flex items-center gap-1.5">
             ${r.is_working && (r.vlc_url || r.test_stream_url) ? `
-              <button onclick="playInVlcByIndex(${idx})" class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" title="Play ${escapeHtml(r.test_channel_name || 'Channel')} in VLC">
+              <button onclick="openStreamPlayerModal(${idx})" class="p-1.5 rounded-lg bg-orange-600/20 hover:bg-orange-600/40 text-orange-400 hover:text-orange-300 border border-orange-500/30 transition flex items-center justify-center w-7 h-7" title="Play ${escapeHtml(r.test_channel_name || 'Channel')} (Web Player & VLC)">
                 <i class="fa-solid fa-play text-xs"></i>
               </button>
             ` : ''}
@@ -610,20 +610,149 @@ function escapeJs(str) {
   return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
 }
 
-// VLC Playback & Player Configuration Modal
-window.playInVlcByIndex = function(idx) {
+// ==========================================
+// Video Player & VLC Hub Modal Lifecycle
+// ==========================================
+let activeMpegtsPlayer = null;
+let currentPlayingServer = null;
+
+window.openStreamPlayerModal = function(idx) {
   const r = currentFilteredList[idx];
   if (!r) return;
-  const targetUrl = r.vlc_url || (r.test_stream_url ? `vlc://${r.test_stream_url}` : null);
-  if (!targetUrl) {
-    showToast('No stream URL available to play.', 'error');
-    return;
-  }
-  const chName = r.test_channel_name || 'Live Channel';
-  showToast(`Opening ${chName} in VLC...`);
-  window.location.href = targetUrl;
+  openStreamPlayerModalByObj(r);
 };
 
+window.openStreamPlayerModalByObj = function(r) {
+  currentPlayingServer = r;
+  const modal = document.getElementById('video-modal');
+  if (!modal) return;
+
+  const chName = r.test_channel_name || 'Live Channel';
+  document.getElementById('video-modal-title').textContent = chName;
+  document.getElementById('video-modal-subtitle').textContent = r.host || '';
+  document.getElementById('video-stream-url-field').value = r.test_stream_url || '';
+
+  // Setup direct and VPN .m3u download buttons
+  const directM3u = document.getElementById('video-btn-m3u-direct');
+  const vpnM3u = document.getElementById('video-btn-m3u-vpn');
+  if (r.test_stream_url) {
+    directM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}`;
+    vpnM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}&proxy=true`;
+    directM3u.classList.remove('opacity-50', 'pointer-events-none');
+    vpnM3u.classList.remove('opacity-50', 'pointer-events-none');
+  } else {
+    directM3u.classList.add('opacity-50', 'pointer-events-none');
+    vpnM3u.classList.add('opacity-50', 'pointer-events-none');
+  }
+
+  // Setup CLI command button
+  const btnCli = document.getElementById('video-btn-copy-cli');
+  if (btnCli) {
+    btnCli.onclick = () => {
+      const cmd = `open -a VLC "${r.test_stream_url}" || vlc "${r.test_stream_url}"`;
+      window.copyToClipboard(cmd, 'VLC launch command copied for Terminal!');
+    };
+  }
+
+  modal.classList.remove('hidden');
+
+  // Start in-browser video playback
+  initLiveVideoPlayer(r.test_stream_url);
+};
+
+function initLiveVideoPlayer(streamUrl) {
+  destroyLiveVideoPlayer();
+
+  const videoElement = document.getElementById('live-video');
+  const overlay = document.getElementById('video-loading-overlay');
+  const overlayText = document.getElementById('video-loading-text');
+
+  if (!streamUrl) {
+    if (overlay) overlay.classList.remove('hidden');
+    if (overlayText) overlayText.textContent = 'No playable stream URL available.';
+    return;
+  }
+
+  if (overlay) overlay.classList.remove('hidden');
+  if (overlayText) overlayText.textContent = 'Connecting to stream via wg0 VPN proxy...';
+
+  const proxyUrl = `/api/stream/proxy?url=${encodeURIComponent(streamUrl)}`;
+
+  // Use mpegts.js for low-latency live MPEG-TS transmuxing
+  if (window.mpegts && window.mpegts.getFeatureList().mseLivePlayback) {
+    try {
+      activeMpegtsPlayer = mpegts.createPlayer({
+        type: 'mse',
+        isLive: true,
+        url: proxyUrl,
+      }, {
+        enableStashBuffer: false,
+        liveBufferLatencyChasing: true,
+        autoCleanupSourceBuffer: true,
+      });
+
+      activeMpegtsPlayer.attachMediaElement(videoElement);
+      activeMpegtsPlayer.load();
+
+      const playPromise = activeMpegtsPlayer.play();
+      if (playPromise !== undefined) {
+        playPromise.then(() => {
+          if (overlay) overlay.classList.add('hidden');
+        }).catch(() => {
+          // If browser policy blocks sound autoplay, mute and retry
+          videoElement.muted = true;
+          activeMpegtsPlayer.play().then(() => {
+            if (overlay) overlay.classList.add('hidden');
+          }).catch(() => {
+            if (overlayText) overlayText.textContent = 'Click video to play or use VLC options below.';
+          });
+        });
+      }
+
+      activeMpegtsPlayer.on(mpegts.Events.ERROR, (type, detail, info) => {
+        console.warn('mpegts error:', type, detail, info);
+        if (overlayText) overlayText.textContent = 'Stream buffering or format unsupported. Use VLC options below.';
+      });
+
+    } catch (e) {
+      console.error('Failed to init mpegts player:', e);
+      videoElement.src = proxyUrl;
+      videoElement.play().then(() => { if (overlay) overlay.classList.add('hidden'); }).catch(() => {});
+    }
+  } else {
+    // Native HLS/video fallback (Safari on iOS/macOS)
+    videoElement.src = proxyUrl;
+    videoElement.play().then(() => { if (overlay) overlay.classList.add('hidden'); }).catch(() => {});
+  }
+}
+
+function destroyLiveVideoPlayer() {
+  const videoElement = document.getElementById('live-video');
+  if (activeMpegtsPlayer) {
+    try {
+      activeMpegtsPlayer.pause();
+      activeMpegtsPlayer.unload();
+      activeMpegtsPlayer.detachMediaElement();
+      activeMpegtsPlayer.destroy();
+    } catch (e) {}
+    activeMpegtsPlayer = null;
+  }
+  if (videoElement) {
+    videoElement.pause();
+    videoElement.removeAttribute('src');
+    videoElement.load();
+  }
+}
+
+window.closeVideoModal = function() {
+  destroyLiveVideoPlayer();
+  const modal = document.getElementById('video-modal');
+  if (modal) modal.classList.add('hidden');
+};
+
+// ==========================================
+// UHF / Chillio / IPTVX Player Modal
+// ==========================================
 window.openPlayerModalByIndex = function(idx) {
   const r = currentFilteredList[idx];
   if (!r) return;
@@ -644,21 +773,21 @@ window.openPlayerModal = function(r) {
   const chName = r.test_channel_name || 'BBC News';
   testBadge.textContent = chName;
 
-  const btnVlcUri = document.getElementById('modal-btn-vlc-uri');
+  const btnWebPlayer = document.getElementById('modal-btn-web-player');
   const btnVlcM3u = document.getElementById('modal-btn-vlc-m3u');
 
   if (r.test_stream_url) {
-    btnVlcUri.disabled = false;
-    btnVlcUri.onclick = () => {
-      const vUrl = r.vlc_url || `vlc://${r.test_stream_url}`;
-      showToast(`Opening ${chName} in VLC...`);
-      window.location.href = vUrl;
+    btnWebPlayer.disabled = false;
+    btnWebPlayer.onclick = () => {
+      closePlayerModal();
+      openStreamPlayerModalByObj(r);
     };
+
     btnVlcM3u.href = `/api/play/m3u?url=${encodeURIComponent(r.test_stream_url)}&title=${encodeURIComponent(chName)}`;
     btnVlcM3u.classList.remove('opacity-50', 'pointer-events-none');
   } else {
-    btnVlcUri.disabled = true;
-    btnVlcUri.onclick = null;
+    btnWebPlayer.disabled = true;
+    btnWebPlayer.onclick = null;
     btnVlcM3u.removeAttribute('href');
     btnVlcM3u.classList.add('opacity-50', 'pointer-events-none');
   }
@@ -691,10 +820,18 @@ window.copyFieldValue = function(inputId, btnElement) {
   }
 };
 
+// Global escape key and backdrop click handlers
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closePlayerModal();
+  if (e.key === 'Escape') {
+    closePlayerModal();
+    closeVideoModal();
+  }
 });
 
 document.getElementById('player-modal')?.addEventListener('click', (e) => {
   if (e.target.id === 'player-modal') closePlayerModal();
+});
+
+document.getElementById('video-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'video-modal') closeVideoModal();
 });
