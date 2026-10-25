@@ -35,9 +35,9 @@ class AuditRequest(BaseModel):
 @app.get("/", response_class=HTMLResponse)
 async def get_index(request: Request):
     return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,
+        request=request,
+        name="index.html",
+        context={
             "default_port": config.PORT,
             "probe_streams_default": config.PROBE_STREAMS,
         },
