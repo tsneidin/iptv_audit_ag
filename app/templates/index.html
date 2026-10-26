@@ -114,11 +114,12 @@
           </div>
 
           <div class="flex items-center gap-1.5">
-            <label for="opt-host-pacing" class="text-xs text-slate-400" title="Anti-503 Rate Limiting per Domain">Anti-503 Pacing:</label>
-            <select id="opt-host-pacing" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2.5 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium" title="Safe Mode limits requests to the same domain and retries with backoff">
-              <option value="safe" selected>🛡️ Safe (2/host + auto-backoff)</option>
+            <label for="opt-host-pacing" class="text-xs text-slate-400" title="Anti-503 Rate Limiting per Domain">Anti-503:</label>
+            <select id="opt-host-pacing" class="bg-unraid-input border border-unraid-border rounded-lg text-xs px-2.5 py-1 text-slate-200 focus:outline-none focus:border-orange-500 font-medium" title="Adaptive mode runs at full speed and only throttles domains that return 503 errors">
+              <option value="adaptive" selected>⚡ Adaptive (Fast; throttle on 503)</option>
+              <option value="safe">🛡️ Always Safe (2/host)</option>
               <option value="stealth">🐢 Stealth (1/host + delay)</option>
-              <option value="fast">⚡ Fast (5/host)</option>
+              <option value="fast">🚀 Uncapped</option>
             </select>
           </div>
         </div>

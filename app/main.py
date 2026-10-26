@@ -63,7 +63,7 @@ class AuditRequest(BaseModel):
     probe_stream: bool = True
     concurrency: int = 25
     audit_mode: str = "turbo"  # "turbo" or "deep"
-    host_pacing: str = "safe"  # "safe", "stealth", "fast"
+    host_pacing: str = "adaptive"  # "adaptive", "safe", "stealth", "fast"
     session_id: Optional[str] = None
 
 

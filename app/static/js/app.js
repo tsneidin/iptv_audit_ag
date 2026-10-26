@@ -192,7 +192,7 @@ async function startAudit(text) {
         probe_stream: optProbe.checked,
         audit_mode: optMode.value,
         concurrency: parseInt(optConcurrency.value) || 25,
-        host_pacing: optHostPacing ? optHostPacing.value : 'safe'
+        host_pacing: optHostPacing ? optHostPacing.value : 'adaptive'
       })
     });
 

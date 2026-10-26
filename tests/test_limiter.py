@@ -11,17 +11,41 @@ from app.parser import IPTVServer
 
 class TestHostRateLimiter(unittest.TestCase):
     def test_presets_configuration(self):
+        adaptive = HostRateLimiter(mode="adaptive")
+        self.assertEqual(adaptive.max_per_host, 2)
+        self.assertEqual(adaptive.min_delay, 0.35)
+        self.assertFalse(adaptive.always_throttled)
+
         safe = HostRateLimiter(mode="safe")
         self.assertEqual(safe.max_per_host, 2)
         self.assertEqual(safe.min_delay, 0.35)
+        self.assertTrue(safe.always_throttled)
 
         stealth = HostRateLimiter(mode="stealth")
         self.assertEqual(stealth.max_per_host, 1)
         self.assertEqual(stealth.min_delay, 0.75)
+        self.assertTrue(stealth.always_throttled)
 
         fast = HostRateLimiter(mode="fast")
         self.assertEqual(fast.max_per_host, 5)
-        self.assertEqual(fast.min_delay, 0.10)
+        self.assertEqual(fast.min_delay, 0.05)
+        self.assertFalse(fast.always_throttled)
+
+    def test_adaptive_dynamic_throttling(self):
+        limiter = HostRateLimiter(mode="adaptive")
+        host_a = "http://provider-a.tv"
+        host_b = "http://provider-b.tv"
+
+        # Initially, neither host is throttled
+        self.assertFalse(limiter.is_host_throttled(host_a))
+        self.assertFalse(limiter.is_host_throttled(host_b))
+
+        # Host A triggers 503
+        limiter.report_rate_limited(host_a, 503)
+
+        # Host A is now throttled, Host B remains unthrottled (maximum speed)
+        self.assertTrue(limiter.is_host_throttled(host_a))
+        self.assertFalse(limiter.is_host_throttled(host_b))
 
     def test_rate_limited_cooldown_and_recovery(self):
         limiter = HostRateLimiter(mode="safe")
