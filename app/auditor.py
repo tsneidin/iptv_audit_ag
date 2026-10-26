@@ -307,18 +307,17 @@ async def audit_iptv_server(
                 pass
             return None
 
-        # TURBO MODE: Query categories first (fast & avoids downloading 50MB+ catalogs)
+        # TURBO MODE: Query categories + live streams concurrently
         if audit_mode == "turbo":
-            live_cats_res, vod_cats_res, series_cats_res = await asyncio.gather(
+            live_cats_res, vod_cats_res, series_cats_res, live_sample_res = await asyncio.gather(
                 fetch_endpoint("get_live_categories"),
                 fetch_endpoint("get_vod_categories"),
                 fetch_endpoint("get_series_categories"),
+                fetch_endpoint("get_live_streams"),
             )
 
-            # 1. Identify adult live categories & find a preferred sample category (News / General)
-            target_sample_cid = None
+            # 1. Identify adult live categories
             if isinstance(live_cats_res, list):
-                live_count = len(live_cats_res)
                 for cat in live_cats_res:
                     name = cat.get("category_name", "")
                     cid = str(cat.get("category_id"))
@@ -327,11 +326,6 @@ async def audit_iptv_server(
                         adult_live_cids.append(cid)
                         if len(adult_matches) < 3:
                             adult_matches.append(name)
-                    elif not target_sample_cid and any(k in name.lower() for k in ["news", "bbc", "uk", "usa", "us", "general", "entertainment"]):
-                        target_sample_cid = cid
-
-                if not target_sample_cid and live_cats_res:
-                    target_sample_cid = str(live_cats_res[0].get("category_id"))
 
             # 2. Check adult VOD categories
             if isinstance(vod_cats_res, list):
@@ -346,29 +340,23 @@ async def audit_iptv_server(
             if isinstance(series_cats_res, list):
                 series_count = len(series_cats_res)
 
-            # 3. Fetch sample stream category AND adult categories (capped at top 5) in parallel
-            fetch_tasks = []
-            if target_sample_cid:
-                fetch_tasks.append(fetch_endpoint(f"get_live_streams&category_id={target_sample_cid}"))
-            else:
-                fetch_tasks.append(fetch_endpoint("get_live_streams"))
-
-            for cid in adult_live_cids[:5]:
-                fetch_tasks.append(fetch_endpoint(f"get_live_streams&category_id={cid}"))
-
-            fetch_resps = await asyncio.gather(*fetch_tasks)
-            live_sample_res = fetch_resps[0] if fetch_resps else None
-
-            # Process adult category stream IDs
-            for s_list in fetch_resps[1:]:
-                if isinstance(s_list, list):
-                    for ch in s_list:
-                        sid = ch.get("stream_id")
-                        if sid:
-                            adult_channel_ids.add(sid)
+            # 3. Fetch exact adult channel counts for detected adult categories (capped at 5)
+            if adult_live_cids:
+                adult_stream_tasks = [
+                    fetch_endpoint(f"get_live_streams&category_id={cid}")
+                    for cid in adult_live_cids[:5]
+                ]
+                adult_stream_resps = await asyncio.gather(*adult_stream_tasks)
+                for s_list in adult_stream_resps:
+                    if isinstance(s_list, list):
+                        for ch in s_list:
+                            sid = ch.get("stream_id")
+                            if sid:
+                                adult_channel_ids.add(sid)
 
             # 4. Check live sample streams for candidate probe & direct name matches
             if isinstance(live_sample_res, list):
+                live_count = len(live_sample_res)
                 for item in live_sample_res:
                     sid = item.get("stream_id")
                     sname = item.get("name", "")
@@ -437,6 +425,10 @@ async def audit_iptv_server(
             vlc_url = f"vlc://{test_stream_url}"
             # Prioritize test_ch_id (e.g. BBC News) for the live probe
             candidate_stream_id = test_ch_id
+        elif candidate_stream_id:
+            test_stream_url = f"{server.host}/live/{server.username}/{server.password}/{candidate_stream_id}.ts"
+            vlc_url = f"vlc://{test_stream_url}"
+            test_ch_name = "Live Stream"
 
         adult_channels_count = len(adult_channel_ids)
         if adult_channels_count > 0:
