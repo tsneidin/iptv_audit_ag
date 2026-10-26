@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from app.auditor import AuditResult, audit_iptv_server
 from app.config import config
 from app.decoder import extract_urls_from_input, fetch_url_content
+from app.limiter import HostRateLimiter
 from app.parser import IPTVServer, extract_iptv_servers
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -62,6 +63,7 @@ class AuditRequest(BaseModel):
     probe_stream: bool = True
     concurrency: int = 25
     audit_mode: str = "turbo"  # "turbo" or "deep"
+    host_pacing: str = "safe"  # "safe", "stealth", "fast"
     session_id: Optional[str] = None
 
 
@@ -158,6 +160,7 @@ async def run_audit_stream(payload: AuditRequest, session: AuditSession) -> Asyn
     # Parallelism tuning (allow up to 50 concurrent audits for extreme speed)
     concurrency_limit = max(1, min(payload.concurrency or config.MAX_CONCURRENT_CHECKS, 50))
     semaphore = asyncio.Semaphore(concurrency_limit)
+    rate_limiter = HostRateLimiter(mode=payload.host_pacing)
     completed_count = 0
     dead_host_cache: Dict[str, str] = {}
 
@@ -173,18 +176,26 @@ async def run_audit_stream(payload: AuditRequest, session: AuditSession) -> Asyn
             if session.is_stopped:
                 return None
 
-            async with semaphore:
+            async with rate_limiter.throttle(srv.host):
                 if session.is_stopped:
                     return None
-                res = await audit_iptv_server(
-                    srv,
-                    audit_client,
-                    probe_stream=payload.probe_stream,
-                    audit_mode=payload.audit_mode,
-                    dead_host_cache=dead_host_cache,
-                )
-                completed_count += 1
-                return res
+                await session.wait_if_paused()
+                if session.is_stopped:
+                    return None
+
+                async with semaphore:
+                    if session.is_stopped:
+                        return None
+                    res = await audit_iptv_server(
+                        srv,
+                        audit_client,
+                        probe_stream=payload.probe_stream,
+                        audit_mode=payload.audit_mode,
+                        dead_host_cache=dead_host_cache,
+                        rate_limiter=rate_limiter,
+                    )
+                    completed_count += 1
+                    return res
 
         tasks = [asyncio.create_task(worker(s)) for s in all_servers]
 

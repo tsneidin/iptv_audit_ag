@@ -30,6 +30,7 @@ const btnText = document.getElementById('btn-text');
 const optProbe = document.getElementById('opt-probe-stream');
 const optMode = document.getElementById('opt-mode');
 const optConcurrency = document.getElementById('opt-concurrency');
+const optHostPacing = document.getElementById('opt-host-pacing');
 
 const progressContainer = document.getElementById('progress-container');
 const progressStatus = document.getElementById('progress-status');
@@ -190,7 +191,8 @@ async function startAudit(text) {
         input_text: text,
         probe_stream: optProbe.checked,
         audit_mode: optMode.value,
-        concurrency: parseInt(optConcurrency.value) || 25
+        concurrency: parseInt(optConcurrency.value) || 25,
+        host_pacing: optHostPacing ? optHostPacing.value : 'safe'
       })
     });
 

@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+import random
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,26 @@ from app.config import config
 from app.parser import IPTVServer
 
 logger = logging.getLogger(__name__)
+
+USER_AGENTS = [
+    "IPTVSmartersPro/3.1.5.1 (Linux; Android 12; SM-G998B)",
+    "VLC/3.0.18 LibVLC/3.0.18",
+    "TiviMate/4.7.0 (Android TV)",
+    "OTT Navigator/1.6.7.4",
+    "AppleCoreMedia/1.0.0.19E241 (Apple TV; U; CPU OS 15_4 like Mac OS X)",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+]
+
+
+def get_player_headers(user_agent: Optional[str] = None) -> Dict[str, str]:
+    ua = user_agent or random.choice(USER_AGENTS)
+    return {
+        "User-Agent": ua,
+        "Accept": "*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Connection": "keep-alive",
+    }
+
 
 # Fast pre-compiled regex for adult keywords matching 'adult', 'xxx', and variations
 ADULT_REGEX = re.compile(
@@ -132,11 +153,16 @@ async def test_live_stream_probe(
         return "No Stream ID", "gray"
 
     stream_url = f"{server.host}/live/{server.username}/{server.password}/{stream_id}.ts"
+    stream_headers = {
+        "User-Agent": "VLC/3.0.18 LibVLC/3.0.18",
+        "Accept": "*/*",
+        "Connection": "close",
+    }
     try:
         async with client.stream(
             "GET",
             stream_url,
-            headers={"User-Agent": config.USER_AGENT},
+            headers=stream_headers,
             timeout=httpx.Timeout(connect=config.CONNECT_TIMEOUT, read=config.PROBE_TIMEOUT, write=2.0, pool=2.0),
         ) as resp:
             if resp.status_code == 200:
@@ -152,6 +178,8 @@ async def test_live_stream_probe(
                 if active_cons >= max_cons and max_cons > 0:
                     return f"Max Conns Busy ({active_cons}/{max_cons})", "yellow"
                 return "Stream Unauthorized (401)", "red"
+            elif resp.status_code in (429, 503):
+                return f"Host Rate-Limited ({resp.status_code})", "yellow"
             elif resp.status_code == 511:
                 return "ISP / Panel Blocked (511)", "red"
             else:
@@ -171,10 +199,12 @@ async def audit_iptv_server(
     probe_stream: bool = True,
     audit_mode: str = "turbo",
     dead_host_cache: Optional[Dict[str, str]] = None,
+    rate_limiter: Optional[Any] = None,
 ) -> AuditResult:
     """
     High-performance tester against Xtream Codes API.
     Uses dead-host caching to avoid timeout lag on dead domains.
+    Handles per-host rate limiting (HTTP 503/429) with adaptive backoff & retries.
     Counts exact adult channels matching 'adult' or 'xxx'.
     Extracts BBC News / prominent channel for one-click VLC playback.
     """
@@ -194,18 +224,35 @@ async def audit_iptv_server(
     start_time = time.time()
     api_url = f"{server.host}/player_api.php?username={server.username}&password={server.password}"
     req_timeout = httpx.Timeout(connect=config.CONNECT_TIMEOUT, read=config.READ_TIMEOUT, write=2.0, pool=3.0)
+    req_headers = get_player_headers()
+    max_retries = rate_limiter.max_retries if rate_limiter else 1
 
     try:
-        resp = await client.get(
-            api_url,
-            headers={"User-Agent": config.USER_AGENT},
-            timeout=req_timeout,
-        )
-        latency = int((time.time() - start_time) * 1000)
+        resp = None
+        latency = 0
+        for attempt in range(max_retries + 1):
+            try:
+                resp = await client.get(
+                    api_url,
+                    headers=req_headers,
+                    timeout=req_timeout,
+                )
+                latency = int((time.time() - start_time) * 1000)
 
-        if resp.status_code != 200:
-            if resp.status_code in (502, 503, 504):
-                reason = f"HTTP {resp.status_code} Gateway Error"
+                # If rate-limited (503 / 429 / 502), back off and retry
+                if resp.status_code in (429, 502, 503, 504) and attempt < max_retries:
+                    if rate_limiter:
+                        cooldown = rate_limiter.report_rate_limited(server.host, resp.status_code)
+                    else:
+                        cooldown = 1.5 + random.uniform(0.2, 0.5)
+                    logger.debug("Rate-limited HTTP %d on %s, retry %d in %.2fs", resp.status_code, server.host, attempt + 1, cooldown)
+                    await asyncio.sleep(cooldown)
+                    continue
+
+                break
+
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                reason = "Offline / Host Unreachable"
                 if dead_host_cache is not None:
                     dead_host_cache[server.host] = reason
                 return AuditResult(
@@ -215,9 +262,61 @@ async def audit_iptv_server(
                     is_working=False,
                     status=reason,
                     status_badge="offline",
+                    m3u_url=server.standard_m3u_url,
+                    error_message="Host connection failed or DNS error",
+                )
+            except (httpx.TimeoutException, asyncio.TimeoutError):
+                if attempt < max_retries:
+                    if rate_limiter:
+                        rate_limiter.report_rate_limited(server.host, 504)
+                    await asyncio.sleep(1.0 + random.uniform(0.2, 0.4))
+                    continue
+
+                reason = "Connection Timeout"
+                if dead_host_cache is not None:
+                    if not rate_limiter or rate_limiter.should_mark_dead(server.host):
+                        dead_host_cache[server.host] = reason
+                return AuditResult(
+                    host=server.host,
+                    username=server.username,
+                    password=server.password,
+                    is_working=False,
+                    status=reason,
+                    status_badge="offline",
+                    m3u_url=server.standard_m3u_url,
+                    error_message="Connection timed out",
+                )
+
+        if resp is None:
+            return AuditResult(
+                host=server.host,
+                username=server.username,
+                password=server.password,
+                is_working=False,
+                status="No Response",
+                status_badge="offline",
+                m3u_url=server.standard_m3u_url,
+                error_message="No response received from host",
+            )
+
+        if resp.status_code != 200:
+            if resp.status_code in (429, 502, 503, 504):
+                reason = f"HTTP {resp.status_code} Rate Limited"
+                if dead_host_cache is not None:
+                    if rate_limiter and rate_limiter.should_mark_dead(server.host):
+                        dead_host_cache[server.host] = reason
+                    elif not rate_limiter:
+                        dead_host_cache[server.host] = reason
+                return AuditResult(
+                    host=server.host,
+                    username=server.username,
+                    password=server.password,
+                    is_working=False,
+                    status=reason,
+                    status_badge="busy",
                     latency_ms=latency,
                     m3u_url=server.standard_m3u_url,
-                    error_message=f"Server returned HTTP {resp.status_code} - skipping remaining accounts on this host",
+                    error_message=f"Server returned HTTP {resp.status_code} (Rate Limited / Service Busy)",
                 )
 
             return AuditResult(
@@ -231,6 +330,10 @@ async def audit_iptv_server(
                 m3u_url=server.standard_m3u_url,
                 error_message=f"Server returned HTTP {resp.status_code}",
             )
+
+        # Successful 200 response -> clear rate limiter error count
+        if rate_limiter:
+            rate_limiter.report_success(server.host)
 
         try:
             data = resp.json()
@@ -295,16 +398,22 @@ async def audit_iptv_server(
         live_res = None
 
         async def fetch_endpoint(action: str):
-            try:
-                r = await client.get(
-                    f"{api_url}&action={action}",
-                    headers={"User-Agent": config.USER_AGENT},
-                    timeout=req_timeout,
-                )
-                if r.status_code == 200:
-                    return r.json()
-            except Exception:
-                pass
+            for ep_attempt in range(2):
+                try:
+                    r = await client.get(
+                        f"{api_url}&action={action}",
+                        headers=req_headers,
+                        timeout=req_timeout,
+                    )
+                    if r.status_code == 200:
+                        return r.json()
+                    elif r.status_code in (429, 502, 503) and ep_attempt == 0:
+                        if rate_limiter:
+                            rate_limiter.report_rate_limited(server.host, r.status_code)
+                        await asyncio.sleep(1.0 + random.uniform(0.1, 0.4))
+                        continue
+                except Exception:
+                    pass
             return None
 
         # TURBO MODE: Query categories + live streams concurrently
@@ -439,17 +548,21 @@ async def audit_iptv_server(
         else:
             adult_details = "None"
 
-        # Stream Probing
+        # Stream Probing (skip if host is currently in cooldown from 503/429 to avoid triggering blocks)
         stream_probe_status = "Skipped"
         stream_badge = "gray"
         if probe_stream and candidate_stream_id:
-            stream_probe_status, stream_badge = await test_live_stream_probe(
-                client=client,
-                server=server,
-                stream_id=candidate_stream_id,
-                active_cons=active_cons,
-                max_cons=max_cons,
-            )
+            if rate_limiter and rate_limiter.is_cooling_down(server.host):
+                stream_probe_status = "Skipped (Host Cooling Down)"
+                stream_badge = "yellow"
+            else:
+                stream_probe_status, stream_badge = await test_live_stream_probe(
+                    client=client,
+                    server=server,
+                    stream_id=candidate_stream_id,
+                    active_cons=active_cons,
+                    max_cons=max_cons,
+                )
 
         status_text = "Expired" if is_expired else (raw_status or "Active")
         status_badge = "expired" if is_expired else "active"
