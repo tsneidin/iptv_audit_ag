@@ -34,26 +34,50 @@ def evp_bytes_to_key(passphrase: bytes, salt: bytes, key_len: int = 32, iv_len: 
 
 
 def decrypt_paste_sh_crypto(ciphertext_b64: bytes, passphrase: str) -> str:
-    """Decrypt paste.sh payload using python cryptography library."""
+    """
+    Decrypt paste.sh payload using python cryptography library.
+    Supports PBKDF2 with SHA-512 (used in v2 and v3 pastes) as well as
+    legacy EVP_BytesToKey (used in v1).
+    """
     ciphertext_raw = base64.b64decode(ciphertext_b64)
-    if ciphertext_raw[:8] != b"Salted__":
+    if len(ciphertext_raw) < 16 or ciphertext_raw[:8] != b"Salted__":
         raise ValueError("Invalid OpenSSL ciphertext header (missing Salted__)")
     salt = ciphertext_raw[8:16]
     data = ciphertext_raw[16:]
+    passphrase_bytes = passphrase.encode("utf-8")
 
-    key, iv = evp_bytes_to_key(passphrase.encode("utf-8"), salt, key_len=32, iv_len=16)
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    decryptor = cipher.decryptor()
-    padded = decryptor.update(data) + decryptor.finalize()
+    # 1. Primary: PBKDF2 with SHA-512, iter=1 (paste.sh v2 / v3 standard)
+    try:
+        derived = hashlib.pbkdf2_hmac("sha512", passphrase_bytes, salt, iterations=1, dklen=48)
+        key = derived[:32]
+        iv = derived[32:48]
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(data) + decryptor.finalize()
+        pad_len = padded[-1]
+        if 0 < pad_len <= 16 and padded[-pad_len:] == bytes([pad_len]) * pad_len:
+            return padded[:-pad_len].decode("utf-8", errors="replace")
+    except Exception:
+        pass
 
-    pad_len = padded[-1]
-    if pad_len > 16:
-        raise ValueError("Invalid PKCS7 padding")
-    return padded[:-pad_len].decode("utf-8", errors="ignore")
+    # 2. Legacy fallback: OpenSSL EVP_BytesToKey with sha512 (paste.sh v1)
+    try:
+        key, iv = evp_bytes_to_key(passphrase_bytes, salt, key_len=32, iv_len=16)
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        decryptor = cipher.decryptor()
+        padded = decryptor.update(data) + decryptor.finalize()
+        pad_len = padded[-1]
+        if 0 < pad_len <= 16 and padded[-pad_len:] == bytes([pad_len]) * pad_len:
+            return padded[:-pad_len].decode("utf-8", errors="replace")
+    except Exception:
+        pass
+
+    raise ValueError("Decryption failed: invalid key or corrupt padding")
 
 
 def decrypt_paste_sh_openssl(ciphertext_b64: bytes, passphrase: str) -> str:
     """Fallback decrypt paste.sh payload using openssl CLI."""
+    # 1. Try with -iter 1 (v2 and v3)
     cmd = [
         "openssl",
         "enc",
@@ -68,9 +92,26 @@ def decrypt_paste_sh_openssl(ciphertext_b64: bytes, passphrase: str) -> str:
         "-base64",
     ]
     proc = subprocess.run(cmd, input=ciphertext_b64, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if proc.returncode != 0:
-        raise RuntimeError(f"OpenSSL decryption failed: {proc.stderr.decode('utf-8', errors='ignore')}")
-    return proc.stdout.decode("utf-8", errors="ignore")
+    if proc.returncode == 0 and proc.stdout:
+        return proc.stdout.decode("utf-8", errors="replace")
+
+    # 2. Try legacy without -iter 1 (v1)
+    cmd_legacy = [
+        "openssl",
+        "enc",
+        "-d",
+        "-aes-256-cbc",
+        "-md",
+        "sha512",
+        "-pass",
+        f"pass:{passphrase}",
+        "-base64",
+    ]
+    proc_legacy = subprocess.run(cmd_legacy, input=ciphertext_b64, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc_legacy.returncode == 0 and proc_legacy.stdout:
+        return proc_legacy.stdout.decode("utf-8", errors="replace")
+
+    raise RuntimeError(f"OpenSSL decryption failed: {proc.stderr.decode('utf-8', errors='ignore')}")
 
 
 def decrypt_paste_sh(ciphertext_b64: bytes, passphrase: str) -> str:
@@ -95,6 +136,10 @@ def decode_token_to_url(token: str) -> str:
     # Direct URL
     if token.startswith("http://") or token.startswith("https://"):
         return token
+
+    # Check for naked paste.sh URL (e.g. paste.sh/xxxx#yyyy)
+    if re.match(r"^paste\.sh/[A-Za-z0-9_-]+#[A-Za-z0-9_-]+", token):
+        return f"https://{token}"
 
     # Check for Unix uuencode formatted text
     if "begin " in token and "\n" in token:
@@ -176,6 +221,16 @@ def extract_urls_from_input(user_input: str) -> List[str]:
                     urls.append(u)
             continue
 
+        # Extract naked paste.sh links if pasted inline (paste.sh/xxxx#yyyy)
+        naked_paste = re.findall(r"(?:^|[\s,;])(paste\.sh/[A-Za-z0-9_-]+#[A-Za-z0-9_-]+)", token)
+        if naked_paste:
+            for np in naked_paste:
+                full_u = f"https://{np}"
+                if full_u not in seen:
+                    seen.add(full_u)
+                    urls.append(full_u)
+            continue
+
         url = decode_token_to_url(token)
         if url and not is_stream_channel_url(url) and url not in seen:
             seen.add(url)
@@ -200,22 +255,66 @@ async def fetch_url_content(url: str, client: httpx.AsyncClient) -> Tuple[str, s
         paste_id = parsed.path.strip("/").split("/")[-1]
         client_key = fragment
 
-        resp = await client.get(
-            f"{paste_url}.txt",
-            headers={
-                "Accept": "text/plain, text/vnd.paste.sh-v2, text/vnd.paste.sh-v3",
-                "User-Agent": config.USER_AGENT,
-            },
-            timeout=config.REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
+        server_key = ""
+        ciphertext_b64 = b""
 
-        lines = resp.content.split(b"\n", 1)
-        server_key = lines[0].decode("utf-8", errors="ignore").strip()
-        ciphertext_b64 = lines[1].strip() if len(lines) > 1 else b""
+        # 1. Try fetching the raw .txt endpoint (paste.sh standard API)
+        try:
+            resp = await client.get(
+                f"{paste_url}.txt",
+                headers={
+                    "Accept": "text/plain, text/vnd.paste.sh-v2, text/vnd.paste.sh-v3",
+                    "User-Agent": "curl/7.88.1",  # paste.sh returns text directly to curl
+                },
+                follow_redirects=True,
+                timeout=config.REQUEST_TIMEOUT,
+            )
+            if resp.status_code == 200:
+                raw_bytes = resp.content
+                if raw_bytes.startswith(b"U2FsdGVkX1") or raw_bytes.startswith(b"Salted__"):
+                    server_key = ""
+                    ciphertext_b64 = raw_bytes.strip()
+                else:
+                    lines = raw_bytes.split(b"\n", 1)
+                    server_key = lines[0].decode("utf-8", errors="ignore").strip()
+                    ciphertext_b64 = lines[1].strip() if len(lines) > 1 else b""
+        except Exception as e:
+            logger.debug("Failed fetching %s.txt: %s", paste_url, e)
+
+        # 2. Fallback: If .txt failed or returned empty ciphertext, fetch the HTML page
+        if not ciphertext_b64:
+            try:
+                resp_html = await client.get(
+                    paste_url,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"},
+                    follow_redirects=True,
+                    timeout=config.REQUEST_TIMEOUT,
+                )
+                if resp_html.status_code == 200:
+                    html_text = resp_html.text
+                    m_content = re.search(r'name=["\']content["\']\s+value=["\']([^"\']+)["\']', html_text)
+                    if not m_content:
+                        m_content = re.search(r'value=["\']([^"\']+)["\']\s+name=["\']content["\']', html_text)
+                    m_serverkey = re.search(r'name=["\']serverkey["\']\s+value=["\']([^"\']*)["\']', html_text)
+                    if not m_serverkey:
+                        m_serverkey = re.search(r'value=["\']([^"\']*)["\']\s+name=["\']serverkey["\']', html_text)
+
+                    if m_content:
+                        ciphertext_b64 = m_content.group(1).encode("utf-8")
+                        server_key = m_serverkey.group(1) if m_serverkey else ""
+            except Exception as e:
+                logger.warning("Failed fetching HTML from %s: %s", paste_url, e)
+
+        if not ciphertext_b64:
+            raise ValueError(f"Could not extract encrypted content from paste.sh link {url}")
 
         passphrase = f"{paste_id}{server_key}{client_key}https://paste.sh"
         plaintext = decrypt_paste_sh(ciphertext_b64, passphrase)
+
+        # Strip optional header like 'Subject: ...\n\n' generated by paste.sh v3
+        if plaintext.startswith("Subject:"):
+            plaintext = re.sub(r"^Subject:.*?\n\n", "", plaintext, count=1, flags=re.DOTALL | re.IGNORECASE)
+
         return url, plaintext
 
     # Standard URL or raw pastebin

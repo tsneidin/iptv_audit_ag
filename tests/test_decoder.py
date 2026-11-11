@@ -33,5 +33,60 @@ https://paste.sh/real-source#key123
         self.assertEqual(len(urls), 1)
         self.assertEqual(urls[0], "https://paste.sh/real-source#key123")
 
+    def test_naked_paste_sh_url_extraction(self):
+        input_str = "paste.sh/7eI0JaKO#13sFCkA_Ilf6COft6az-CxHS"
+        urls = extract_urls_from_input(input_str)
+        self.assertEqual(len(urls), 1)
+        self.assertEqual(urls[0], "https://paste.sh/7eI0JaKO#13sFCkA_Ilf6COft6az-CxHS")
+
+    def test_paste_sh_v3_decryption_and_unicode_parsing(self):
+        from app.decoder import decrypt_paste_sh
+        from app.parser import extract_iptv_servers
+        import base64
+        import hashlib
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+
+        # Encrypt a test v3 payload using PBKDF2 sha512 iter=1
+        salt = b"12345678"
+        passphrase = "7eI0JaKO13sFCkA_Ilf6COft6az-CxHShttps://paste.sh"
+        derived = hashlib.pbkdf2_hmac("sha512", passphrase.encode(), salt, iterations=1, dklen=48)
+        key, iv = derived[:32], derived[32:48]
+
+        plaintext = (
+            "Subject: 📋🔐 paste.sh\n\n"
+            "𝙋𝙤𝙧𝙩𝙖𝙡 : http://pqgmyhja.msostvip.com\n"
+            "𝙐𝙨𝙚𝙧 : MD2ST667\n"
+            "𝙋𝙖𝙨𝙨 : 85FTYAMV\n"
+            "𝙋𝙤𝙧𝙩 : 80\n\n"
+            "Portal : http://hr129.vmyjfhnzpw.top\n"
+            "User : vip4591765831780\n"
+            "Pass : 4e1a0860d388\n"
+            "Port : 8080\n"
+        )
+        data = plaintext.encode("utf-8")
+        pad_len = 16 - (len(data) % 16)
+        padded = data + bytes([pad_len]) * pad_len
+
+        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+        enc = cipher.encryptor()
+        ct = enc.update(padded) + enc.finalize()
+        b64_payload = base64.b64encode(b"Salted__" + salt + ct)
+
+        decrypted = decrypt_paste_sh(b64_payload, passphrase)
+        self.assertIn("MD2ST667", decrypted)
+        self.assertIn("vip4591765831780", decrypted)
+
+        # Parse servers from decrypted text
+        servers = extract_iptv_servers(decrypted)
+        self.assertEqual(len(servers), 2)
+        self.assertEqual(servers[0].host, "http://pqgmyhja.msostvip.com:80")
+        self.assertEqual(servers[0].username, "MD2ST667")
+        self.assertEqual(servers[0].password, "85FTYAMV")
+
+        self.assertEqual(servers[1].host, "http://hr129.vmyjfhnzpw.top:8080")
+        self.assertEqual(servers[1].username, "vip4591765831780")
+        self.assertEqual(servers[1].password, "4e1a0860d388")
+
 if __name__ == "__main__":
     unittest.main()

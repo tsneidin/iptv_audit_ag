@@ -1,5 +1,6 @@
 import re
 from typing import Dict, List, Optional
+import unicodedata
 from urllib.parse import parse_qs, urlparse
 from pydantic import BaseModel
 
@@ -78,14 +79,20 @@ def parse_key_value_blocks(text: str, source_url: str = "") -> List[IPTVServer]:
         Host: n2ip.tv:2095
         User: Christian1
         Pass: christian1
+    Or Portal / Port blocks:
+        Portal : http://hr129.vmyjfhnzpw.top
+        Port : 8080
+        User : vip4591765831780
+        Pass : 4e1a0860d388
     """
     servers: List[IPTVServer] = []
     blocks = re.split(r"(?:-{3,}|\n\s*\n)", text)
 
     for block in blocks:
-        host_match = re.search(r"^\s*(?:Host|Server|Domain|URL)\s*:\s*(.+)$", block, re.IGNORECASE | re.MULTILINE)
+        host_match = re.search(r"^\s*(?:Host|Server|Domain|URL|Portal)\s*:\s*(.+)$", block, re.IGNORECASE | re.MULTILINE)
         user_match = re.search(r"^\s*(?:User|Username)\s*:\s*(.+)$", block, re.IGNORECASE | re.MULTILINE)
         pass_match = re.search(r"^\s*(?:Pass|Password)\s*:\s*(.+)$", block, re.IGNORECASE | re.MULTILINE)
+        port_match = re.search(r"^\s*(?:Port)\s*:\s*(\d+)", block, re.IGNORECASE | re.MULTILINE)
         m3u_match = re.search(r"^\s*(?:M3U|Playlist)\s*:\s*(https?://\S+)", block, re.IGNORECASE | re.MULTILINE)
 
         if host_match and user_match and pass_match:
@@ -94,8 +101,14 @@ def parse_key_value_blocks(text: str, source_url: str = "") -> List[IPTVServer]:
             password = pass_match.group(1).strip()
             raw_m3u = m3u_match.group(1).strip() if m3u_match else ""
 
+            norm_host = normalize_host(raw_host)
+            parsed_url = urlparse(norm_host)
+            if port_match and not parsed_url.port:
+                port_num = port_match.group(1).strip()
+                norm_host = f"{norm_host}:{port_num}"
+
             server = IPTVServer(
-                host=normalize_host(raw_host),
+                host=norm_host,
                 username=username,
                 password=password,
                 source_url=source_url,
@@ -213,6 +226,12 @@ def extract_iptv_servers(text: str, source_url: str = "") -> List[IPTVServer]:
     from decrypted text, M3U links, key-value blocks, or tabular reports.
     Deduplicates results.
     """
+    if not text:
+        return []
+
+    # Normalize stylized Unicode (e.g. mathematical bold/italic letters like 𝙋𝙤𝙧𝙩𝙖𝙡)
+    text = unicodedata.normalize("NFKC", text)
+
     servers: List[IPTVServer] = []
     seen: Dict[str, IPTVServer] = {}
 
